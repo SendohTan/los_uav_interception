@@ -1,0 +1,13 @@
+{
+  "dt": 0.1,
+  "max_time": 100.0,
+  "success_radius": 0.6,
+  "escape_radius": 10.0,
+  "interceptor_type": "A",
+  "target_type": "C",
+  "navigation_constant": 4.0,
+  "pursuit_gain": 0.05,
+  "lead_time": 3.0,
+  "desired_speed_ratio": 0.98,
+  "los_rate_filter_alpha": 0.85
+}
