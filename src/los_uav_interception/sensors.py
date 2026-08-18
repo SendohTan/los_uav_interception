@@ -7,9 +7,33 @@ import numpy as np
 
 @dataclass(frozen=True)
 class BearingRangeNoise:
-    range_bias_fraction: float = 0.0
-    range_jitter_std: float = 0.0
+    camera_constant_pixel_m: float = 1200.0
+    pixel_error_max: int = 1
     angle_noise_std_deg: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.camera_constant_pixel_m <= 0.0:
+            raise ValueError("camera_constant_pixel_m must be positive")
+        if self.pixel_error_max < 0:
+            raise ValueError("pixel_error_max must be non-negative")
+        if self.angle_noise_std_deg < 0.0:
+            raise ValueError("angle_noise_std_deg must be non-negative")
+
+
+def pixel_quantized_range(
+    true_distance: float,
+    camera_constant_pixel_m: float,
+    pixel_error: int = 0,
+) -> tuple[float, float, int]:
+    if true_distance <= 0.0:
+        raise ValueError("true_distance must be positive")
+    if camera_constant_pixel_m <= 0.0:
+        raise ValueError("camera_constant_pixel_m must be positive")
+    apparent_pixels = camera_constant_pixel_m / true_distance
+    quantized_pixels = max(int(np.rint(apparent_pixels)), 1)
+    measured_pixels = max(quantized_pixels + int(pixel_error), 1)
+    observed_distance = camera_constant_pixel_m / measured_pixels
+    return float(observed_distance), float(apparent_pixels), measured_pixels
 
 
 @dataclass(frozen=True)
@@ -84,6 +108,9 @@ class RelativePositionSensor:
     ) -> None:
         self.noise = BearingRangeNoise() if noise is None else noise
         self.rng = np.random.default_rng(seed)
+        self.last_apparent_pixels = np.nan
+        self.last_measured_pixels = 0
+        self.last_range_error_fraction = np.nan
 
     def measure(self, relative_position: np.ndarray) -> np.ndarray:
         relative_position = np.asarray(relative_position, dtype=np.float64)
@@ -95,11 +122,20 @@ class RelativePositionSensor:
         elevation = float(
             np.arcsin(np.clip(-relative_position[2] / distance, -1.0, 1.0))
         )
-        observed_distance = distance * (
-            1.0
-            + self.noise.range_bias_fraction
-            + self.rng.normal(0.0, self.noise.range_jitter_std)
+        pixel_error = int(
+            self.rng.integers(
+                -self.noise.pixel_error_max,
+                self.noise.pixel_error_max + 1,
+            )
         )
+        observed_distance, apparent_pixels, measured_pixels = pixel_quantized_range(
+            distance,
+            self.noise.camera_constant_pixel_m,
+            pixel_error,
+        )
+        self.last_apparent_pixels = apparent_pixels
+        self.last_measured_pixels = measured_pixels
+        self.last_range_error_fraction = observed_distance / distance - 1.0
         angle_std = np.radians(self.noise.angle_noise_std_deg)
         observed_azimuth = azimuth + self.rng.normal(0.0, angle_std)
         observed_elevation = elevation + self.rng.normal(0.0, angle_std)

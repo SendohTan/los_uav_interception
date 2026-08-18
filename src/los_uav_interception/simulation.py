@@ -11,7 +11,15 @@ from .metrics import hit_probability_components
 from .sensors import BearingRangeNoise, CameraFOV, RelativePositionSensor
 
 
-MOTION_MODES = ("line", "arc", "multi_sine", "jink")
+EVALUATION_MOTION_MODES = (
+    "line",
+    "cosine",
+    "arc",
+    "random",
+    "multi_sine",
+    "bspline",
+)
+MOTION_MODES = (*EVALUATION_MOTION_MODES, "jink")
 
 
 @dataclass(frozen=True)
@@ -23,8 +31,8 @@ class SimulationConfig:
     interceptor_type: str = "A"
     target_type: str = "C"
     target_motion: str = "line"
-    range_bias_fraction: float = 0.075
-    range_jitter_std: float = 0.005
+    camera_constant_pixel_m: float = 1200.0
+    pixel_error_max: int = 1
     angle_noise_std_deg: float = 0.5
     fov_enabled: bool = True
     fov_horizontal_deg: float = 24.0
@@ -45,6 +53,7 @@ class SimulationResult:
     desired_velocities: np.ndarray
     guidance_accelerations: np.ndarray
     target_visible: np.ndarray
+    range_error_fraction: np.ndarray
 
 
 def _segment_minimum_distance(
@@ -71,13 +80,178 @@ def _segment_minimum_distance(
 
 
 class GoalDirectedTargetController:
-    def __init__(self, motion: str, dt: float) -> None:
+    def __init__(
+        self,
+        motion: str,
+        dt: float,
+        initial_position: np.ndarray,
+        seed: int,
+    ) -> None:
         if motion not in MOTION_MODES:
             raise ValueError(f"motion must be one of {MOTION_MODES}")
         self.motion = motion
         self.dt = float(dt)
+        self.initial_position = np.asarray(initial_position, dtype=np.float64).copy()
+        self.initial_range = max(float(np.linalg.norm(self.initial_position)), 1e-12)
+        radial = self.initial_position / self.initial_range
+        lateral = np.array([-radial[1], radial[0], 0.0], dtype=np.float64)
+        if float(np.linalg.norm(lateral)) < 1e-12:
+            lateral = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        self.lateral = lateral / float(np.linalg.norm(lateral))
+        self.vertical = np.cross(radial, self.lateral)
+        self.vertical /= float(np.linalg.norm(self.vertical)) + 1e-12
+        self.rng = np.random.default_rng(seed)
+        self.lookahead = 0.12
+        self.curve_strength = 0.45
+        self.multi_sine_frequencies = self.rng.uniform(
+            [0.65, 1.15, 1.75],
+            [0.95, 1.55, 2.25],
+        )
+        self.multi_sine_lateral_weights = self.rng.uniform(0.45, 1.0, 3)
+        self.multi_sine_vertical_weights = self.rng.uniform(0.25, 0.75, 3)
+        self.multi_sine_lateral_phases = self.rng.uniform(-np.pi, np.pi, 3)
+        self.multi_sine_vertical_phases = self.rng.uniform(-np.pi, np.pi, 3)
+        self.random_lateral, self.random_vertical = self._random_control_points(
+            int(self.rng.integers(5, 8)),
+            0.12,
+            0.04,
+        )
+        self.bspline_lateral, self.bspline_vertical = self._random_control_points(
+            int(self.rng.integers(7, 10)),
+            0.14,
+            0.06,
+        )
         self.jink_started = False
         self.jink_sign = 1.0
+
+    def _random_control_points(
+        self,
+        count: int,
+        lateral_ratio: float,
+        vertical_ratio: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        progress = np.linspace(0.0, 1.0, count)
+        envelope = np.clip(np.sin(np.pi * progress), 0.0, None) ** 1.5
+        lateral = self.rng.uniform(-1.0, 1.0, count) * envelope
+        vertical = self.rng.uniform(-1.0, 1.0, count) * envelope
+        lateral[0] = 0.0
+        vertical[0] = 0.0
+        lateral[-2:] = 0.0
+        vertical[-2:] = 0.0
+        lateral *= self.curve_strength * self.initial_range * lateral_ratio
+        vertical *= self.curve_strength * self.initial_range * vertical_ratio
+        return lateral, vertical
+
+    @staticmethod
+    def _bspline_value(control_points: np.ndarray, progress: float) -> float:
+        points = np.asarray(control_points, dtype=np.float64)
+        degree = min(3, len(points) - 1)
+        last_index = len(points) - 1
+        interior_count = last_index - degree
+        knots = np.concatenate(
+            (
+                np.zeros(degree + 1),
+                np.arange(1, interior_count + 1) / (interior_count + 1),
+                np.ones(degree + 1),
+            )
+        )
+        value = float(np.clip(progress, 0.0, 1.0))
+        span = (
+            last_index
+            if value >= 1.0
+            else int(np.searchsorted(knots, value, side="right") - 1)
+        )
+        span = int(np.clip(span, degree, last_index))
+        work = points[span - degree : span + 1].copy()
+        for level in range(1, degree + 1):
+            for index in range(degree, level - 1, -1):
+                knot_index = span - degree + index
+                denominator = (
+                    knots[knot_index + degree - level + 1] - knots[knot_index]
+                )
+                alpha = 0.0 if denominator <= 1e-12 else (
+                    value - knots[knot_index]
+                ) / denominator
+                work[index] = (
+                    (1.0 - alpha) * work[index - 1] + alpha * work[index]
+                )
+        return float(work[degree])
+
+    def _curve_offset(self, progress: float) -> tuple[float, float]:
+        progress = float(np.clip(progress, 0.0, 1.0))
+        envelope = np.sin(np.pi * progress) ** 2
+        if self.motion == "arc":
+            lateral = 0.10 * self.curve_strength * self.initial_range * envelope
+            vertical = (
+                0.02
+                * self.curve_strength
+                * self.initial_range
+                * envelope
+                * np.sin(2.0 * np.pi * progress)
+            )
+            return float(lateral), float(vertical)
+        if self.motion == "cosine":
+            return (
+                float(
+                    0.35
+                    * self.curve_strength
+                    * self.initial_range
+                    * envelope
+                    * np.sin(2.0 * np.pi * progress)
+                ),
+                float(
+                    0.10
+                    * self.curve_strength
+                    * self.initial_range
+                    * envelope
+                    * np.sin(3.0 * np.pi * progress)
+                ),
+            )
+        if self.motion == "random":
+            return (
+                self._bspline_value(self.random_lateral, progress),
+                self._bspline_value(self.random_vertical, progress),
+            )
+        if self.motion == "multi_sine":
+            lateral_wave = np.sum(
+                self.multi_sine_lateral_weights
+                * np.sin(
+                    2.0 * np.pi * self.multi_sine_frequencies * progress
+                    + self.multi_sine_lateral_phases
+                )
+            ) / np.sum(np.abs(self.multi_sine_lateral_weights))
+            vertical_wave = np.sum(
+                self.multi_sine_vertical_weights
+                * np.sin(
+                    2.0 * np.pi * self.multi_sine_frequencies * progress
+                    + self.multi_sine_vertical_phases
+                )
+            ) / np.sum(np.abs(self.multi_sine_vertical_weights))
+            return (
+                float(
+                    0.18
+                    * self.curve_strength
+                    * self.initial_range
+                    * envelope
+                    * lateral_wave
+                ),
+                float(
+                    0.06
+                    * self.curve_strength
+                    * self.initial_range
+                    * envelope
+                    * vertical_wave
+                ),
+            )
+        if self.motion == "bspline":
+            terminal_envelope = np.clip((1.0 - progress) / 0.30, 0.0, 1.0) ** 2
+            return (
+                self._bspline_value(self.bspline_lateral, progress)
+                * terminal_envelope,
+                self._bspline_value(self.bspline_vertical, progress)
+                * terminal_envelope,
+            )
+        return 0.0, 0.0
 
     def command(
         self,
@@ -90,29 +264,26 @@ class GoalDirectedTargetController:
         if goal_norm < 1e-12:
             return -target.velocity / self.dt
         goal_direction = to_goal / goal_norm
-        lateral = np.array([-goal_direction[1], goal_direction[0], 0.0])
-        lateral_norm = float(np.linalg.norm(lateral))
-        if lateral_norm < 1e-12:
-            lateral = np.array([0.0, 1.0, 0.0])
-        else:
-            lateral /= lateral_norm
-        vertical = np.cross(goal_direction, lateral)
-        vertical /= float(np.linalg.norm(vertical)) + 1e-12
-
-        lateral_gain = 0.0
-        vertical_gain = 0.0
-        if self.motion == "arc":
-            lateral_gain = 0.35
-        elif self.motion == "multi_sine":
-            lateral_gain = (
-                0.34 * np.sin(0.42 * time_seconds)
-                + 0.18 * np.sin(0.83 * time_seconds + 0.7)
-                + 0.10 * np.sin(1.37 * time_seconds - 0.4)
+        desired_direction = goal_direction
+        if self.motion in EVALUATION_MOTION_MODES and self.motion != "line":
+            travelled = float(
+                np.dot(
+                    target.position - self.initial_position,
+                    -self.initial_position / self.initial_range,
+                )
             )
-            vertical_gain = (
-                0.11 * np.sin(0.51 * time_seconds + 0.3)
-                + 0.06 * np.sin(1.11 * time_seconds)
+            progress = max(travelled / self.initial_range, 0.0)
+            lookahead_progress = min(progress + self.lookahead, 1.0)
+            path_center = self.initial_position * (1.0 - lookahead_progress)
+            lateral_offset, vertical_offset = self._curve_offset(lookahead_progress)
+            aim_point = (
+                path_center
+                + lateral_offset * self.lateral
+                + vertical_offset * self.vertical
             )
+            path_direction = aim_point - target.position
+            if float(np.linalg.norm(path_direction)) > 1e-12:
+                desired_direction = path_direction
         elif self.motion == "jink":
             lateral_gain = 0.18 * np.sin(0.45 * time_seconds)
             if 80.0 <= closest_interceptor_distance <= 150.0:
@@ -121,10 +292,8 @@ class GoalDirectedTargetController:
                 phase = int(max(time_seconds, 0.0) / 1.5)
                 self.jink_sign = -1.0 if phase % 2 else 1.0
                 lateral_gain += 0.9 * self.jink_sign
+            desired_direction = goal_direction + lateral_gain * self.lateral
 
-        desired_direction = (
-            goal_direction + lateral_gain * lateral + vertical_gain * vertical
-        )
         desired_velocity = velocity_along_direction(
             desired_direction,
             target.limits,
@@ -135,7 +304,7 @@ class GoalDirectedTargetController:
             acceleration += (
                 self.jink_sign
                 * target.limits.max_horizontal_acceleration
-                * lateral
+                * self.lateral
             )
         return acceleration
 
@@ -143,8 +312,8 @@ class GoalDirectedTargetController:
 def _make_sensor(config: SimulationConfig, seed: int) -> RelativePositionSensor:
     return RelativePositionSensor(
         BearingRangeNoise(
-            range_bias_fraction=config.range_bias_fraction,
-            range_jitter_std=config.range_jitter_std,
+            camera_constant_pixel_m=config.camera_constant_pixel_m,
+            pixel_error_max=config.pixel_error_max,
             angle_noise_std_deg=config.angle_noise_std_deg,
         ),
         seed=seed,
@@ -202,13 +371,19 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
     safety_gate = GuidanceSafetyGate(controller, interceptor_limits)
     sensor = _make_sensor(config, seed)
     camera_fov = _make_fov(config)
-    target_controller = GoalDirectedTargetController(config.target_motion, config.dt)
+    target_controller = GoalDirectedTargetController(
+        config.target_motion,
+        config.dt,
+        target.position,
+        seed,
+    )
 
     interceptor_history = [interceptor.position.copy()]
     interceptor_velocity_history = [interceptor.velocity.copy()]
     desired_velocity_history = [interceptor.velocity.copy()]
     acceleration_history = [np.zeros(3, dtype=np.float64)]
     visibility_history = [True]
+    range_error_history = [np.nan]
     target_history = [target.position.copy()]
     distance_history = [float(np.linalg.norm(target.position - interceptor.position))]
     minimum_distance = distance_history[0]
@@ -227,6 +402,9 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
             sensor.measure(true_relative_position)
             if target_visible
             else np.zeros(3, dtype=np.float64)
+        )
+        range_error_fraction = (
+            sensor.last_range_error_fraction if target_visible else np.nan
         )
         command = safety_gate.command(
             current_time_s=step * config.dt,
@@ -266,6 +444,7 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         desired_velocity_history.append(command_velocity.copy())
         acceleration_history.append(command_acceleration.copy())
         visibility_history.append(target_visible)
+        range_error_history.append(range_error_fraction)
         target_history.append(target.position.copy())
         distance_history.append(distance)
         if minimum_distance < config.success_radius:
@@ -292,6 +471,7 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         desired_velocities=np.asarray(desired_velocity_history)[:, None, :],
         guidance_accelerations=np.asarray(acceleration_history)[:, None, :],
         target_visible=np.asarray(visibility_history, dtype=bool)[:, None],
+        range_error_fraction=np.asarray(range_error_history, dtype=np.float64)[:, None],
     )
 
 
@@ -346,7 +526,12 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         sensors.append(_make_sensor(config, seed + index))
     camera_fov = _make_fov(config)
 
-    target_controller = GoalDirectedTargetController(config.target_motion, config.dt)
+    target_controller = GoalDirectedTargetController(
+        config.target_motion,
+        config.dt,
+        target.position,
+        seed,
+    )
     interceptor_history = [np.vstack([item.position for item in interceptors])]
     interceptor_velocity_history = [
         np.vstack([item.velocity for item in interceptors])
@@ -356,6 +541,7 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
     ]
     acceleration_history = [np.zeros((3, 3), dtype=np.float64)]
     visibility_history = [np.ones(3, dtype=bool)]
+    range_error_history = [np.full(3, np.nan, dtype=np.float64)]
     target_history = [target.position.copy()]
     initial_distances = np.asarray(
         [np.linalg.norm(target.position - item.position) for item in interceptors]
@@ -371,6 +557,7 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         step_desired_velocities = []
         step_accelerations = []
         step_visibility = []
+        step_range_errors = []
         for index, interceptor in enumerate(interceptors):
             true_relative_position = target.position - interceptor.position
             target_visible = (
@@ -381,6 +568,9 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
                 sensors[index].measure(true_relative_position)
                 if target_visible
                 else np.zeros(3, dtype=np.float64)
+            )
+            range_error_fraction = (
+                sensors[index].last_range_error_fraction if target_visible else np.nan
             )
             command = safety_gates[index].command(
                 current_time_s=step * config.dt,
@@ -403,6 +593,7 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
             step_desired_velocities.append(command_velocity.copy())
             step_accelerations.append(command_acceleration.copy())
             step_visibility.append(target_visible)
+            step_range_errors.append(range_error_fraction)
 
         previous_distances = distance_history[-1]
         target.step(
@@ -436,6 +627,7 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         desired_velocity_history.append(np.vstack(step_desired_velocities))
         acceleration_history.append(np.vstack(step_accelerations))
         visibility_history.append(np.asarray(step_visibility, dtype=bool))
+        range_error_history.append(np.asarray(step_range_errors, dtype=np.float64))
         target_history.append(target.position.copy())
         distance_history.append(distances)
         if minimum_distance < config.success_radius:
@@ -464,4 +656,5 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         desired_velocities=np.asarray(desired_velocity_history),
         guidance_accelerations=np.asarray(acceleration_history),
         target_visible=np.asarray(visibility_history, dtype=bool),
+        range_error_fraction=np.asarray(range_error_history, dtype=np.float64),
     )

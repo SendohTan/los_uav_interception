@@ -2,7 +2,7 @@
 
 这是从 `mappo_uav_project` 中独立出来的纯 LOS（Line of Sight，视线）无人机拦截项目。它不包含 PPO/MAPPO、Actor、Critic 或模型权重，只保留可直接部署和测试的解析导引、受限点质量动力学、传感器噪声、单机/三机仿真与命中函数 F 诊断。
 
-> **2026-08-18 / v0.2.0：**针对实机速度指令震荡，新增滑窗 LOS-rate 回归、LOS 角速度软阈值、期望速度低通与变化率限制、加速度低通、失帧/超时安全门、`24°×16°` FOV 门控和震荡诊断。完整原理、参数、分轨迹测试数据和实机限制见 [`docs/STABILIZATION_2026-08-18.md`](docs/STABILIZATION_2026-08-18.md)。
+> **2026-08-18 / v0.2.0：**针对实机速度指令震荡，新增滑窗 LOS-rate 回归、LOS 角速度软阈值、期望速度低通与变化率限制、加速度低通、失帧/超时安全门、`24°×16°` FOV 门控、像素量化测距和震荡诊断。正式测试统一使用六类目标轨迹。完整原理、参数、分轨迹测试数据和实机限制见 [`docs/STABILIZATION_2026-08-18.md`](docs/STABILIZATION_2026-08-18.md)。
 
 ## 1. 适用范围
 
@@ -13,7 +13,17 @@
 - 仿真成功判定：连续轨迹最近距离小于 `0.6 m`；
 - 命中函数 F：只记录诊断指标，不决定是否成功。
 
-默认观测模型包含逐帧 `0.5°` 方位角/高度角高斯误差、`7.5%` 固定测距偏差、`0.5%` 测距抖动和 `24°×16°` FOV。由于点质量模型没有机体姿态和云台状态，FOV 光轴暂以拦截机速度方向近似；目标出视场后导引释放，拦截机保持当前速度滑行，重新进入视场后需一帧恢复 LOS-rate 估计。
+默认观测模型包含逐帧 `0.5°` 方位角/高度角高斯误差、`C=1200 pixel·m` 的像素量化测距、`±1 pixel` 检测误差和 `24°×16°` FOV。FOV 决定目标是否可见，像素量化决定目标可见时的距离误差，两者独立执行。由于点质量模型没有机体姿态和云台状态，FOV 光轴暂以拦截机速度方向近似；目标出视场后导引释放，拦截机保持当前速度滑行，重新进入视场后需一帧恢复 LOS-rate 估计。
+
+像素测距使用：
+
+```text
+N_true = C / D_true
+N_measured = max(1, round(N_true) + e_pixel),  e_pixel ∈ {-1, 0, +1}
+D_observed = C / N_measured
+```
+
+`D_true=300 m` 时目标约为 `4 pixel`。测得 `3/4/5 pixel` 时，距离分别为 `400/300/240 m`，对应 `+33.3%/0%/-20%`；距离继续增加时像素数更少，相对误差会进一步增大。
 
 本仓库定位为导航与算法验证软件。完整飞行系统还需配置姿态控制器、坐标系转换、时间同步、故障保护、地理围栏和安全员接管功能。
 
@@ -36,7 +46,7 @@ python -m los_uav_interception single --motion line
 ### 三机测试
 
 ```powershell
-python -m los_uav_interception multi --motion jink
+python -m los_uav_interception multi --motion bspline
 ```
 
 默认输出：
@@ -49,11 +59,11 @@ python -m los_uav_interception multi --motion jink
 
 ```powershell
 python -m los_uav_interception multi `
-  --motion jink `
+  --motion bspline `
   --guidance-profile stable `
   --angle-noise-deg 0.5 `
-  --range-bias 0.075 `
-  --range-jitter 0.005 `
+  --camera-constant-pixel-m 1200 `
+  --pixel-error-max 1 `
   --fov-horizontal-deg 24 `
   --fov-vertical-deg 16
 ```
@@ -80,18 +90,7 @@ python examples\stability_benchmark.py --scope single --episodes 100
 python examples\stability_benchmark.py --scope multi --episodes 50
 ```
 
-独立版在 `2026-07-28` 使用无观测噪声、随机初始距离/方位/高度、每类 20 回合的冒烟结果：
-
-| 目标运动 | 单机成功率 | 三机成功率 |
-|---|---:|---:|
-| line | 100% | 100% |
-| arc | 95% | 100% |
-| multi_sine | 5% | 5% |
-| jink | 65% | 75% |
-
-该组数据用于代码回归。`multi_sine` 在独立版连续方位观测 LOS-rate 估计条件下难度显著上升，表明基于仿真真值相对速度合成 LOS-rate 的测试结果具有性能高估风险。
-
-`2026-08-18` 正式测试采用逐帧 `0.5°` 角噪声、`7.5%` 固定测距偏差、`0.5%` 测距抖动和 `24°×16°` FOV。单机每种配置测试 400 回合，三机每种配置测试 200 回合。
+`2026-08-18` 正式测试采用 `line / cosine / arc / random / multi_sine / bspline` 六类目标导向轨迹、逐帧 `0.5°` 角噪声、像素量化测距和 `24°×16°` FOV。单机每种配置测试 600 回合，三机每种配置测试 300 回合。
 
 配置含义：
 
@@ -108,65 +107,83 @@ python examples\stability_benchmark.py --scope multi --episodes 50
 - **加速度指令 jerk RMS**：滤波和限幅后的加速度指令差分除以 `dt`，计算三轴向量模的均方根。该值描述指令变化强度，未包含真实飞控和机体响应；
 - **单机 FOV 内帧比例**：对全部拦截机和全部仿真帧统计目标位于相机视场内的比例；
 - **全系统丢失帧比例**：该帧没有任何拦截机看见目标的比例；
+- **平均绝对测距误差**：仅对目标位于 FOV 内且产生有效距离观测的帧，统计 `|D_observed/D_true-1|` 的均值；
+- **测距误差超过 20% 帧比例**：有效距离观测中绝对相对误差大于 `20%` 的比例；
 - 三机场景的命中条件为任一拦截机命中，振荡条件为任一拦截机满足振荡判据。三机换向频率取三架机最大值，jerk RMS 取三架机均值；
 - 命中与振荡为独立指标，同一回合可以同时命中并被判定为振荡。
 
 单机分轨迹结果：
 
-| 配置 | 轨迹 | 回合数 | 0.6 m 命中率 | 振荡回合占比 | FOV 内帧比例 | 全系统丢失帧比例 |
+| 配置 | 轨迹 | 命中率 | 振荡率 | 全系统丢失帧 | 测距 MAE | 误差>20%帧 |
 |---|---|---:|---:|---:|---:|---:|
-| legacy | line | 100 | 100% | 99% | 99.9% | 0.1% |
-| legacy | arc | 100 | 13% | 100% | 54.1% | 45.9% |
-| legacy | multi_sine | 100 | 0% | 100% | 42.3% | 57.7% |
-| legacy | jink | 100 | 27% | 100% | 46.4% | 53.6% |
-| stable | line | 100 | 89% | 12% | 92.4% | 7.6% |
-| stable | arc | 100 | 7% | 20% | 46.5% | 53.5% |
-| stable | multi_sine | 100 | 1% | 1% | 40.6% | 59.4% |
-| stable | jink | 100 | 18% | 13% | 38.4% | 61.6% |
-| conservative | line | 100 | 54% | 0% | 75.0% | 25.0% |
-| conservative | arc | 100 | 2% | 3% | 45.2% | 54.8% |
-| conservative | multi_sine | 100 | 0% | 0% | 41.7% | 58.3% |
-| conservative | jink | 100 | 16% | 1% | 37.0% | 63.0% |
-| flight_test | line | 100 | 86% | 1% | 92.5% | 7.5% |
-| flight_test | arc | 100 | 0% | 0% | 45.0% | 55.0% |
-| flight_test | multi_sine | 100 | 0% | 0% | 42.0% | 58.0% |
-| flight_test | jink | 100 | 6% | 0% | 30.2% | 69.8% |
+| legacy | line | 99% | 98% | 0.7% | 13.4% | 22.7% |
+| legacy | cosine | 0% | 100% | 58.7% | 14.9% | 25.8% |
+| legacy | arc | 95% | 99% | 2.8% | 13.5% | 23.2% |
+| legacy | random | 94% | 99% | 3.4% | 13.4% | 22.9% |
+| legacy | multi_sine | 22% | 98% | 41.5% | 13.7% | 23.8% |
+| legacy | bspline | 78% | 98% | 11.5% | 13.7% | 23.6% |
+| stable | line | 92% | 11% | 6.1% | 14.0% | 24.2% |
+| stable | cosine | 0% | 1% | 61.2% | 15.6% | 27.6% |
+| stable | arc | 65% | 58% | 20.9% | 14.0% | 25.1% |
+| stable | random | 78% | 34% | 13.3% | 13.8% | 24.3% |
+| stable | multi_sine | 12% | 5% | 47.9% | 14.1% | 24.5% |
+| stable | bspline | 53% | 20% | 26.7% | 14.3% | 24.3% |
+| conservative | line | 71% | 0% | 16.2% | 13.7% | 23.6% |
+| conservative | cosine | 0% | 0% | 58.9% | 15.0% | 26.0% |
+| conservative | arc | 57% | 5% | 23.3% | 13.8% | 24.2% |
+| conservative | random | 23% | 0% | 42.9% | 14.0% | 24.2% |
+| conservative | multi_sine | 3% | 0% | 53.2% | 14.2% | 24.9% |
+| conservative | bspline | 32% | 0% | 36.3% | 14.0% | 24.0% |
+| flight_test | line | 90% | 0% | 5.8% | 13.6% | 23.0% |
+| flight_test | cosine | 0% | 0% | 58.5% | 15.0% | 25.8% |
+| flight_test | arc | 15% | 0% | 44.5% | 13.6% | 23.3% |
+| flight_test | random | 6% | 0% | 49.8% | 13.6% | 23.3% |
+| flight_test | multi_sine | 1% | 0% | 54.0% | 14.3% | 25.2% |
+| flight_test | bspline | 4% | 0% | 50.5% | 14.0% | 23.9% |
 
 三机分轨迹结果：
 
-| 配置 | 轨迹 | 回合数 | 0.6 m 命中率 | 振荡回合占比 | 平均单机 FOV 内帧比例 | 全系统丢失帧比例 |
+| 配置 | 轨迹 | 命中率 | 振荡率 | 全系统丢失帧 | 测距 MAE | 误差>20%帧 |
 |---|---|---:|---:|---:|---:|---:|
-| legacy | line | 50 | 100% | 100% | 99.9% | 0.0% |
-| legacy | arc | 50 | 24% | 100% | 59.6% | 39.3% |
-| legacy | multi_sine | 50 | 2% | 100% | 43.9% | 55.2% |
-| legacy | jink | 50 | 40% | 100% | 56.2% | 42.7% |
-| stable | line | 50 | 100% | 32% | 98.1% | 0.0% |
-| stable | arc | 50 | 12% | 46% | 48.9% | 46.1% |
-| stable | multi_sine | 50 | 0% | 0% | 40.9% | 57.6% |
-| stable | jink | 50 | 40% | 36% | 54.1% | 44.4% |
-| conservative | line | 50 | 86% | 0% | 91.5% | 7.4% |
-| conservative | arc | 50 | 4% | 4% | 46.2% | 50.6% |
-| conservative | multi_sine | 50 | 0% | 0% | 41.9% | 57.4% |
-| conservative | jink | 50 | 18% | 2% | 39.1% | 59.9% |
-| flight_test | line | 50 | 96% | 0% | 97.1% | 2.1% |
-| flight_test | arc | 50 | 0% | 0% | 44.7% | 52.8% |
-| flight_test | multi_sine | 50 | 0% | 0% | 42.0% | 57.5% |
-| flight_test | jink | 50 | 4% | 0% | 29.0% | 70.6% |
+| legacy | line | 100% | 100% | 0.0% | 13.7% | 22.9% |
+| legacy | cosine | 0% | 100% | 56.8% | 14.5% | 24.7% |
+| legacy | arc | 100% | 100% | 0.0% | 13.2% | 22.3% |
+| legacy | random | 100% | 100% | 0.0% | 13.4% | 22.3% |
+| legacy | multi_sine | 24% | 100% | 40.0% | 13.4% | 22.4% |
+| legacy | bspline | 86% | 100% | 7.1% | 13.3% | 22.7% |
+| stable | line | 100% | 38% | 0.0% | 13.7% | 23.0% |
+| stable | cosine | 0% | 2% | 59.9% | 15.3% | 26.6% |
+| stable | arc | 98% | 96% | 1.2% | 13.2% | 22.5% |
+| stable | random | 100% | 78% | 0.0% | 13.4% | 22.4% |
+| stable | multi_sine | 26% | 14% | 39.5% | 13.5% | 22.7% |
+| stable | bspline | 84% | 66% | 8.3% | 13.5% | 22.7% |
+| conservative | line | 86% | 0% | 7.2% | 13.7% | 23.0% |
+| conservative | cosine | 0% | 0% | 58.2% | 14.7% | 24.8% |
+| conservative | arc | 92% | 24% | 4.5% | 13.2% | 22.5% |
+| conservative | random | 64% | 6% | 18.6% | 13.4% | 22.4% |
+| conservative | multi_sine | 8% | 0% | 49.3% | 13.5% | 22.8% |
+| conservative | bspline | 50% | 2% | 26.6% | 13.4% | 22.7% |
+| flight_test | line | 98% | 2% | 1.0% | 13.7% | 22.9% |
+| flight_test | cosine | 0% | 0% | 58.6% | 14.7% | 24.9% |
+| flight_test | arc | 18% | 0% | 42.9% | 13.2% | 22.3% |
+| flight_test | random | 12% | 0% | 46.6% | 13.5% | 22.5% |
+| flight_test | multi_sine | 10% | 0% | 48.2% | 13.6% | 22.9% |
+| flight_test | bspline | 12% | 2% | 46.2% | 13.5% | 22.9% |
 
 整体指令平滑性结果：
 
 | 场景 | 配置 | 0.6 m 命中率 | 振荡回合占比 | 最大轴换向频率 | jerk RMS |
 |---|---|---:|---:|---:|---:|
-| 单机 | legacy | 35.00% | 99.75% | 2.635 Hz | 19.469 m/s³ |
-| 单机 | stable | 28.75% | 11.50% | 0.239 Hz | 2.513 m/s³ |
-| 单机 | conservative | 18.00% | 1.00% | 0.117 Hz | 2.043 m/s³ |
-| 单机 | flight_test | 23.00% | 0.25% | 0.087 Hz | 1.715 m/s³ |
-| 三机 | legacy | 41.50% | 100.00% | 3.094 Hz | 20.381 m/s³ |
-| 三机 | stable | 38.00% | 28.50% | 0.330 Hz | 2.549 m/s³ |
-| 三机 | conservative | 27.00% | 1.50% | 0.153 Hz | 2.163 m/s³ |
-| 三机 | flight_test | 25.00% | 0.00% | 0.110 Hz | 1.743 m/s³ |
+| 单机 | legacy | 64.67% | 98.67% | 3.656 Hz | 23.279 m/s³ |
+| 单机 | stable | 50.00% | 21.50% | 0.276 Hz | 2.378 m/s³ |
+| 单机 | conservative | 31.00% | 0.83% | 0.105 Hz | 1.950 m/s³ |
+| 单机 | flight_test | 19.33% | 0.00% | 0.073 Hz | 1.824 m/s³ |
+| 三机 | legacy | 68.33% | 100.00% | 4.072 Hz | 23.684 m/s³ |
+| 三机 | stable | 68.00% | 49.00% | 0.427 Hz | 2.380 m/s³ |
+| 三机 | conservative | 50.00% | 5.33% | 0.170 Hz | 1.989 m/s³ |
+| 三机 | flight_test | 25.00% | 0.67% | 0.099 Hz | 1.784 m/s³ |
 
-结果表明，`stable` 相对 `legacy` 显著降低命令换向频率和 jerk RMS。arc、multi_sine 和 jink 的低命中率同时伴随较高的全系统丢失帧比例，当前主要瓶颈是有限视场下的目标保持和重捕获；继续增强低通会降低振荡，但也会增加导引相位滞后。默认 `stable` 用于算法仿真，`LOSGuidanceConfig.flight_test()` 用于低速、开阔场地、具备人工接管条件的首轮 HIL 和实飞验证。
+结果表明，像素量化模型下约 `22%～28%` 的有效观测帧存在超过 `20%` 的测距误差。距离比例误差对归一化 LOS 方向影响有限，但会影响提前时间、目标重捕获和速度追踪项。`stable` 相对 `legacy` 显著降低命令换向频率和 jerk RMS；cosine 与 multi_sine 的低命中率主要伴随长时间 FOV 丢失。默认 `stable` 用于算法仿真，`LOSGuidanceConfig.flight_test()` 用于低速、开阔场地、具备人工接管条件的首轮 HIL 和实飞验证。
 
 ## 3. 控制器接口
 

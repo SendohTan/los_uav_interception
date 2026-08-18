@@ -31,7 +31,8 @@ def plot_result(result: SimulationResult, output_path: str | Path) -> Path:
     axis.set_title(
         f"LOS interception | success={result.success} | "
         f"min={result.minimum_distance:.3f} m | "
-        f"visible={np.mean(result.target_visible):.1%}"
+        f"visible={np.mean(result.target_visible):.1%} | "
+        f"range MAE={np.nanmean(np.abs(result.range_error_fraction)):.1%}"
     )
     axis.legend(loc="best")
     figure.savefig(output_path, dpi=220)
@@ -55,6 +56,7 @@ def save_csv(result: SimulationResult, output_path: str | Path, dt: float) -> Pa
                     *target,
                     result.distances[step, index],
                     int(result.target_visible[step, index]),
+                    result.range_error_fraction[step, index],
                 ]
             )
     np.savetxt(
@@ -64,7 +66,7 @@ def save_csv(result: SimulationResult, output_path: str | Path, dt: float) -> Pa
         header=(
             "time_s,interceptor_id,interceptor_north_m,interceptor_east_m,"
             "interceptor_down_m,target_north_m,target_east_m,target_down_m,distance_m,"
-            "target_visible"
+            "target_visible,range_error_fraction"
         ),
         comments="",
     )

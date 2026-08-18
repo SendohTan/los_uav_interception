@@ -9,12 +9,14 @@ class SimulationTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertLess(result.minimum_distance, 0.6)
         self.assertEqual(result.target_visible.shape[1], 1)
+        self.assertEqual(result.range_error_fraction.shape, result.target_visible.shape)
 
     def test_multi_line_interception_reaches_success_radius(self) -> None:
         result = run_multi(SimulationConfig(target_motion="line"), seed=5)
         self.assertTrue(result.success)
         self.assertLess(result.minimum_distance, 0.6)
         self.assertEqual(result.target_visible.shape[1], 3)
+        self.assertEqual(result.range_error_fraction.shape, result.target_visible.shape)
 
 
 if __name__ == "__main__":

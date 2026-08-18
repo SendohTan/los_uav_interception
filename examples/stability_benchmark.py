@@ -11,7 +11,7 @@ from los_uav_interception import (
     run_multi,
     run_single,
 )
-from los_uav_interception.simulation import MOTION_MODES
+from los_uav_interception.simulation import EVALUATION_MOTION_MODES
 
 
 PROFILES = {
@@ -39,7 +39,7 @@ def episode_metrics(result, dt: float) -> list:
 def summarize(rows: list[dict], profiles: list[str]) -> list[dict]:
     summaries = []
     for profile_name in profiles:
-        for motion in (*MOTION_MODES, "overall"):
+        for motion in (*EVALUATION_MOTION_MODES, "overall"):
             selected = [
                 row
                 for row in rows
@@ -75,6 +75,19 @@ def summarize(rows: list[dict], profiles: list[str]) -> list[dict]:
                     "mean_all_agents_lost_fraction": float(
                         np.mean([row["all_agents_lost_fraction"] for row in selected])
                     ),
+                    "mean_absolute_range_error_fraction": float(
+                        np.mean(
+                            [row["mean_absolute_range_error_fraction"] for row in selected]
+                        )
+                    ),
+                    "range_error_over_20_percent_fraction": float(
+                        np.mean(
+                            [
+                                row["range_error_over_20_percent_fraction"]
+                                for row in selected
+                            ]
+                        )
+                    ),
                 }
             )
     return summaries
@@ -86,8 +99,8 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--seed", type=int, default=2026081801)
     parser.add_argument("--angle-noise-deg", type=float, default=0.5)
-    parser.add_argument("--range-bias", type=float, default=0.075)
-    parser.add_argument("--range-jitter", type=float, default=0.005)
+    parser.add_argument("--camera-constant-pixel-m", type=float, default=1200.0)
+    parser.add_argument("--pixel-error-max", type=int, default=1)
     parser.add_argument("--no-fov", action="store_true")
     parser.add_argument("--fov-horizontal-deg", type=float, default=24.0)
     parser.add_argument("--fov-vertical-deg", type=float, default=16.0)
@@ -103,14 +116,14 @@ def main() -> None:
     rows = []
     for profile_name in arguments.profiles:
         guidance_config = PROFILES[profile_name]
-        for motion_index, motion in enumerate(MOTION_MODES):
+        for motion_index, motion in enumerate(EVALUATION_MOTION_MODES):
             for episode in range(arguments.episodes):
                 seed = arguments.seed + motion_index * 100_000 + episode
                 config = SimulationConfig(
                     target_motion=motion,
                     angle_noise_std_deg=arguments.angle_noise_deg,
-                    range_bias_fraction=arguments.range_bias,
-                    range_jitter_std=arguments.range_jitter,
+                    camera_constant_pixel_m=arguments.camera_constant_pixel_m,
+                    pixel_error_max=arguments.pixel_error_max,
                     fov_enabled=not arguments.no_fov,
                     fov_horizontal_deg=arguments.fov_horizontal_deg,
                     fov_vertical_deg=arguments.fov_vertical_deg,
@@ -118,6 +131,11 @@ def main() -> None:
                 )
                 result = runner(config, seed=seed)
                 stability = episode_metrics(result, config.dt)
+                finite_range_errors = np.abs(
+                    result.range_error_fraction[
+                        np.isfinite(result.range_error_fraction)
+                    ]
+                )
                 rows.append(
                     {
                         "scope": arguments.scope,
@@ -136,6 +154,12 @@ def main() -> None:
                         "agent_visible_fraction": float(np.mean(result.target_visible)),
                         "all_agents_lost_fraction": float(
                             np.mean(~np.any(result.target_visible, axis=1))
+                        ),
+                        "mean_absolute_range_error_fraction": float(
+                            np.mean(finite_range_errors)
+                        ),
+                        "range_error_over_20_percent_fraction": float(
+                            np.mean(finite_range_errors > 0.20)
                         ),
                     }
                 )
