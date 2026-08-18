@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from .guidance import LOSGuidanceConfig
 from .plotting import plot_result, save_csv
 from .simulation import MOTION_MODES, SimulationConfig, run_multi, run_single
 
@@ -16,6 +17,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--angle-noise-deg", type=float, default=0.0)
     parser.add_argument("--range-bias", type=float, default=0.0)
     parser.add_argument("--range-jitter", type=float, default=0.0)
+    parser.add_argument(
+        "--guidance-profile",
+        choices=("legacy", "stable", "conservative", "flight_test"),
+        default="stable",
+    )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--plot", default="outputs/trajectory.png")
     parser.add_argument("--csv", default="outputs/trajectory.csv")
@@ -24,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     arguments = build_parser().parse_args()
+    guidance_profiles = {
+        "legacy": LOSGuidanceConfig.legacy,
+        "stable": LOSGuidanceConfig,
+        "conservative": LOSGuidanceConfig.conservative,
+        "flight_test": LOSGuidanceConfig.flight_test,
+    }
     config = SimulationConfig(
         success_radius=arguments.success_radius,
         interceptor_type=arguments.interceptor_type,
@@ -32,6 +44,7 @@ def main() -> None:
         angle_noise_std_deg=arguments.angle_noise_deg,
         range_bias_fraction=arguments.range_bias,
         range_jitter_std=arguments.range_jitter,
+        guidance_config=guidance_profiles[arguments.guidance_profile](),
     )
     runner = run_single if arguments.scope == "single" else run_multi
     result = runner(config, seed=arguments.seed)

@@ -1,0 +1,12 @@
+{
+  "navigation_constant": 4.0,
+  "pursuit_gain": 0.05,
+  "lead_time": 3.0,
+  "desired_speed_ratio": 0.98,
+  "los_rate_filter_alpha": 0.85,
+  "los_rate_window_size": 2,
+  "los_rate_soft_threshold_rad_s": 0.0,
+  "desired_velocity_filter_tau_s": 0.0,
+  "desired_velocity_slew_limit_mps2": 0.0,
+  "acceleration_filter_tau_s": 0.0
+}

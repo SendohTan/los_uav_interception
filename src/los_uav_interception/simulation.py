@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -25,6 +25,7 @@ class SimulationConfig:
     range_bias_fraction: float = 0.0
     range_jitter_std: float = 0.0
     angle_noise_std_deg: float = 0.0
+    guidance_config: LOSGuidanceConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,9 @@ class SimulationResult:
     target_positions: np.ndarray
     distances: np.ndarray
     hit_metrics: dict[str, float | bool]
+    interceptor_velocities: np.ndarray
+    desired_velocities: np.ndarray
+    guidance_accelerations: np.ndarray
 
 
 def _segment_minimum_distance(
@@ -182,11 +186,14 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         dt=config.dt,
         velocity=interceptor_velocity,
     )
-    controller = LOSGuidanceController()
+    controller = LOSGuidanceController(config.guidance_config)
     sensor = _make_sensor(config, seed)
     target_controller = GoalDirectedTargetController(config.target_motion, config.dt)
 
     interceptor_history = [interceptor.position.copy()]
+    interceptor_velocity_history = [interceptor.velocity.copy()]
+    desired_velocity_history = [interceptor.velocity.copy()]
+    acceleration_history = [np.zeros(3, dtype=np.float64)]
     target_history = [target.position.copy()]
     distance_history = [float(np.linalg.norm(target.position - interceptor.position))]
     minimum_distance = distance_history[0]
@@ -220,6 +227,9 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         distance = float(np.linalg.norm(target.position - interceptor.position))
         minimum_distance = min(minimum_distance, segment_distance, distance)
         interceptor_history.append(interceptor.position.copy())
+        interceptor_velocity_history.append(interceptor.velocity.copy())
+        desired_velocity_history.append(command.desired_velocity.copy())
+        acceleration_history.append(command.acceleration.copy())
         target_history.append(target.position.copy())
         distance_history.append(distance)
         if minimum_distance < config.success_radius:
@@ -242,6 +252,9 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         target_positions=np.asarray(target_history),
         distances=np.asarray(distance_history)[:, None],
         hit_metrics=metrics,
+        interceptor_velocities=np.asarray(interceptor_velocity_history)[:, None, :],
+        desired_velocities=np.asarray(desired_velocity_history)[:, None, :],
+        guidance_accelerations=np.asarray(acceleration_history)[:, None, :],
     )
 
 
@@ -254,7 +267,15 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         np.array([0.0, -2.0, 2.5]),
     )
     speed_ratios = (0.75, 0.85, 0.95)
-    navigation_constants = (3.6, 4.0, 4.4)
+    base_guidance_config = (
+        LOSGuidanceConfig()
+        if config.guidance_config is None
+        else config.guidance_config
+    )
+    navigation_constants = tuple(
+        base_guidance_config.navigation_constant * factor
+        for factor in (0.9, 1.0, 1.1)
+    )
     interceptors: list[PointMassUAV] = []
     controllers: list[LOSGuidanceController] = []
     sensors: list[RelativePositionSensor] = []
@@ -275,13 +296,23 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         )
         controllers.append(
             LOSGuidanceController(
-                LOSGuidanceConfig(navigation_constant=navigation_constants[index])
+                replace(
+                    base_guidance_config,
+                    navigation_constant=navigation_constants[index],
+                )
             )
         )
         sensors.append(_make_sensor(config, seed + index))
 
     target_controller = GoalDirectedTargetController(config.target_motion, config.dt)
     interceptor_history = [np.vstack([item.position for item in interceptors])]
+    interceptor_velocity_history = [
+        np.vstack([item.velocity for item in interceptors])
+    ]
+    desired_velocity_history = [
+        np.vstack([item.velocity for item in interceptors])
+    ]
+    acceleration_history = [np.zeros((3, 3), dtype=np.float64)]
     target_history = [target.position.copy()]
     initial_distances = np.asarray(
         [np.linalg.norm(target.position - item.position) for item in interceptors]
@@ -294,6 +325,8 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
     for step in range(steps):
         previous_interceptors = [item.position.copy() for item in interceptors]
         previous_target = target.position.copy()
+        step_desired_velocities = []
+        step_accelerations = []
         for index, interceptor in enumerate(interceptors):
             observed_relative_position = sensors[index].measure(
                 target.position - interceptor.position
@@ -305,6 +338,8 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
                 config.dt,
             )
             interceptor.step(command.acceleration)
+            step_desired_velocities.append(command.desired_velocity.copy())
+            step_accelerations.append(command.acceleration.copy())
 
         previous_distances = distance_history[-1]
         target.step(
@@ -332,6 +367,11 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
             float(np.min(segment_distances)),
         )
         interceptor_history.append(np.vstack([item.position for item in interceptors]))
+        interceptor_velocity_history.append(
+            np.vstack([item.velocity for item in interceptors])
+        )
+        desired_velocity_history.append(np.vstack(step_desired_velocities))
+        acceleration_history.append(np.vstack(step_accelerations))
         target_history.append(target.position.copy())
         distance_history.append(distances)
         if minimum_distance < config.success_radius:
@@ -356,4 +396,7 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         target_positions=np.asarray(target_history),
         distances=np.asarray(distance_history),
         hit_metrics=metrics,
+        interceptor_velocities=np.asarray(interceptor_velocity_history),
+        desired_velocities=np.asarray(desired_velocity_history),
+        guidance_accelerations=np.asarray(acceleration_history),
     )

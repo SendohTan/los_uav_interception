@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "los-uav-interception"
-version = "0.1.0"
+version = "0.2.0"
 description = "Standalone position and LOS-rate guidance for UAV interception"
 readme = "README.md"
 requires-python = ">=3.9"
