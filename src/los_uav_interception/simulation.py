@@ -6,8 +6,9 @@ import numpy as np
 
 from .dynamics import AIRCRAFT_LIMITS, PointMassUAV, velocity_along_direction
 from .guidance import LOSGuidanceConfig, LOSGuidanceController
+from .integration import GuidanceSafetyGate
 from .metrics import hit_probability_components
-from .sensors import BearingRangeNoise, RelativePositionSensor
+from .sensors import BearingRangeNoise, CameraFOV, RelativePositionSensor
 
 
 MOTION_MODES = ("line", "arc", "multi_sine", "jink")
@@ -22,9 +23,12 @@ class SimulationConfig:
     interceptor_type: str = "A"
     target_type: str = "C"
     target_motion: str = "line"
-    range_bias_fraction: float = 0.0
-    range_jitter_std: float = 0.0
-    angle_noise_std_deg: float = 0.0
+    range_bias_fraction: float = 0.075
+    range_jitter_std: float = 0.005
+    angle_noise_std_deg: float = 0.5
+    fov_enabled: bool = True
+    fov_horizontal_deg: float = 24.0
+    fov_vertical_deg: float = 16.0
     guidance_config: LOSGuidanceConfig | None = None
 
 
@@ -40,6 +44,7 @@ class SimulationResult:
     interceptor_velocities: np.ndarray
     desired_velocities: np.ndarray
     guidance_accelerations: np.ndarray
+    target_visible: np.ndarray
 
 
 def _segment_minimum_distance(
@@ -146,6 +151,13 @@ def _make_sensor(config: SimulationConfig, seed: int) -> RelativePositionSensor:
     )
 
 
+def _make_fov(config: SimulationConfig) -> CameraFOV:
+    return CameraFOV(
+        horizontal_deg=config.fov_horizontal_deg,
+        vertical_deg=config.fov_vertical_deg,
+    )
+
+
 def _initial_target(config: SimulationConfig, seed: int) -> PointMassUAV:
     rng = np.random.default_rng(seed)
     distance = float(rng.uniform(300.0, 500.0))
@@ -187,13 +199,16 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         velocity=interceptor_velocity,
     )
     controller = LOSGuidanceController(config.guidance_config)
+    safety_gate = GuidanceSafetyGate(controller, interceptor_limits)
     sensor = _make_sensor(config, seed)
+    camera_fov = _make_fov(config)
     target_controller = GoalDirectedTargetController(config.target_motion, config.dt)
 
     interceptor_history = [interceptor.position.copy()]
     interceptor_velocity_history = [interceptor.velocity.copy()]
     desired_velocity_history = [interceptor.velocity.copy()]
     acceleration_history = [np.zeros(3, dtype=np.float64)]
+    visibility_history = [True]
     target_history = [target.position.copy()]
     distance_history = [float(np.linalg.norm(target.position - interceptor.position))]
     minimum_distance = distance_history[0]
@@ -203,14 +218,34 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
     for step in range(steps):
         previous_interceptor = interceptor.position.copy()
         previous_target = target.position.copy()
-        observed_relative_position = sensor.measure(target.position - interceptor.position)
-        command = controller.command(
-            observed_relative_position,
-            interceptor.velocity,
-            interceptor.limits,
-            config.dt,
+        true_relative_position = target.position - interceptor.position
+        target_visible = (
+            not config.fov_enabled
+            or camera_fov.contains(true_relative_position, interceptor.velocity)
         )
-        interceptor.step(command.acceleration)
+        observed_relative_position = (
+            sensor.measure(true_relative_position)
+            if target_visible
+            else np.zeros(3, dtype=np.float64)
+        )
+        command = safety_gate.command(
+            current_time_s=step * config.dt,
+            measurement_time_s=step * config.dt,
+            target_visible=target_visible,
+            relative_position_ned_m=observed_relative_position,
+            own_velocity_ned_mps=interceptor.velocity,
+        )
+        command_acceleration = (
+            np.zeros(3, dtype=np.float64)
+            if command is None
+            else command.acceleration
+        )
+        command_velocity = (
+            interceptor.velocity.copy()
+            if command is None
+            else command.desired_velocity
+        )
+        interceptor.step(command_acceleration)
         target_acceleration = target_controller.command(
             target,
             step * config.dt,
@@ -228,8 +263,9 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         minimum_distance = min(minimum_distance, segment_distance, distance)
         interceptor_history.append(interceptor.position.copy())
         interceptor_velocity_history.append(interceptor.velocity.copy())
-        desired_velocity_history.append(command.desired_velocity.copy())
-        acceleration_history.append(command.acceleration.copy())
+        desired_velocity_history.append(command_velocity.copy())
+        acceleration_history.append(command_acceleration.copy())
+        visibility_history.append(target_visible)
         target_history.append(target.position.copy())
         distance_history.append(distance)
         if minimum_distance < config.success_radius:
@@ -255,6 +291,7 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         interceptor_velocities=np.asarray(interceptor_velocity_history)[:, None, :],
         desired_velocities=np.asarray(desired_velocity_history)[:, None, :],
         guidance_accelerations=np.asarray(acceleration_history)[:, None, :],
+        target_visible=np.asarray(visibility_history, dtype=bool)[:, None],
     )
 
 
@@ -278,6 +315,7 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
     )
     interceptors: list[PointMassUAV] = []
     controllers: list[LOSGuidanceController] = []
+    safety_gates: list[GuidanceSafetyGate] = []
     sensors: list[RelativePositionSensor] = []
     for index in range(3):
         direction = target.position - offsets[index]
@@ -302,7 +340,11 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
                 )
             )
         )
+        safety_gates.append(
+            GuidanceSafetyGate(controllers[-1], interceptor_limits)
+        )
         sensors.append(_make_sensor(config, seed + index))
+    camera_fov = _make_fov(config)
 
     target_controller = GoalDirectedTargetController(config.target_motion, config.dt)
     interceptor_history = [np.vstack([item.position for item in interceptors])]
@@ -313,6 +355,7 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         np.vstack([item.velocity for item in interceptors])
     ]
     acceleration_history = [np.zeros((3, 3), dtype=np.float64)]
+    visibility_history = [np.ones(3, dtype=bool)]
     target_history = [target.position.copy()]
     initial_distances = np.asarray(
         [np.linalg.norm(target.position - item.position) for item in interceptors]
@@ -327,19 +370,39 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         previous_target = target.position.copy()
         step_desired_velocities = []
         step_accelerations = []
+        step_visibility = []
         for index, interceptor in enumerate(interceptors):
-            observed_relative_position = sensors[index].measure(
-                target.position - interceptor.position
+            true_relative_position = target.position - interceptor.position
+            target_visible = (
+                not config.fov_enabled
+                or camera_fov.contains(true_relative_position, interceptor.velocity)
             )
-            command = controllers[index].command(
-                observed_relative_position,
-                interceptor.velocity,
-                interceptor.limits,
-                config.dt,
+            observed_relative_position = (
+                sensors[index].measure(true_relative_position)
+                if target_visible
+                else np.zeros(3, dtype=np.float64)
             )
-            interceptor.step(command.acceleration)
-            step_desired_velocities.append(command.desired_velocity.copy())
-            step_accelerations.append(command.acceleration.copy())
+            command = safety_gates[index].command(
+                current_time_s=step * config.dt,
+                measurement_time_s=step * config.dt,
+                target_visible=target_visible,
+                relative_position_ned_m=observed_relative_position,
+                own_velocity_ned_mps=interceptor.velocity,
+            )
+            command_acceleration = (
+                np.zeros(3, dtype=np.float64)
+                if command is None
+                else command.acceleration
+            )
+            command_velocity = (
+                interceptor.velocity.copy()
+                if command is None
+                else command.desired_velocity
+            )
+            interceptor.step(command_acceleration)
+            step_desired_velocities.append(command_velocity.copy())
+            step_accelerations.append(command_acceleration.copy())
+            step_visibility.append(target_visible)
 
         previous_distances = distance_history[-1]
         target.step(
@@ -372,6 +435,7 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         )
         desired_velocity_history.append(np.vstack(step_desired_velocities))
         acceleration_history.append(np.vstack(step_accelerations))
+        visibility_history.append(np.asarray(step_visibility, dtype=bool))
         target_history.append(target.position.copy())
         distance_history.append(distances)
         if minimum_distance < config.success_radius:
@@ -399,4 +463,5 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         interceptor_velocities=np.asarray(interceptor_velocity_history),
         desired_velocities=np.asarray(desired_velocity_history),
         guidance_accelerations=np.asarray(acceleration_history),
+        target_visible=np.asarray(visibility_history, dtype=bool),
     )

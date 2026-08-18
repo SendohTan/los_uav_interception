@@ -14,9 +14,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--interceptor-type", choices=("A", "B"), default="A")
     parser.add_argument("--target-type", choices=("C", "D"), default="C")
     parser.add_argument("--success-radius", type=float, default=0.6)
-    parser.add_argument("--angle-noise-deg", type=float, default=0.0)
-    parser.add_argument("--range-bias", type=float, default=0.0)
-    parser.add_argument("--range-jitter", type=float, default=0.0)
+    parser.add_argument("--angle-noise-deg", type=float, default=0.5)
+    parser.add_argument("--range-bias", type=float, default=0.075)
+    parser.add_argument("--range-jitter", type=float, default=0.005)
+    parser.add_argument("--no-fov", action="store_true")
+    parser.add_argument("--fov-horizontal-deg", type=float, default=24.0)
+    parser.add_argument("--fov-vertical-deg", type=float, default=16.0)
     parser.add_argument(
         "--guidance-profile",
         choices=("legacy", "stable", "conservative", "flight_test"),
@@ -44,6 +47,9 @@ def main() -> None:
         angle_noise_std_deg=arguments.angle_noise_deg,
         range_bias_fraction=arguments.range_bias,
         range_jitter_std=arguments.range_jitter,
+        fov_enabled=not arguments.no_fov,
+        fov_horizontal_deg=arguments.fov_horizontal_deg,
+        fov_vertical_deg=arguments.fov_vertical_deg,
         guidance_config=guidance_profiles[arguments.guidance_profile](),
     )
     runner = run_single if arguments.scope == "single" else run_multi

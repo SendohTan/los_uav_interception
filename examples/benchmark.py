@@ -10,8 +10,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark LOS interception")
     parser.add_argument("scope", choices=("single", "multi"))
     parser.add_argument("--episodes", type=int, default=20)
-    parser.add_argument("--angle-noise-deg", type=float, default=0.0)
-    parser.add_argument("--range-bias", type=float, default=0.0)
+    parser.add_argument("--angle-noise-deg", type=float, default=0.5)
+    parser.add_argument("--range-bias", type=float, default=0.075)
+    parser.add_argument("--range-jitter", type=float, default=0.005)
+    parser.add_argument("--no-fov", action="store_true")
+    parser.add_argument("--fov-horizontal-deg", type=float, default=24.0)
+    parser.add_argument("--fov-vertical-deg", type=float, default=16.0)
     parser.add_argument("--seed", type=int, default=1000)
     arguments = parser.parse_args()
     runner = run_single if arguments.scope == "single" else run_multi
@@ -23,6 +27,10 @@ def main() -> None:
                     target_motion=motion,
                     angle_noise_std_deg=arguments.angle_noise_deg,
                     range_bias_fraction=arguments.range_bias,
+                    range_jitter_std=arguments.range_jitter,
+                    fov_enabled=not arguments.no_fov,
+                    fov_horizontal_deg=arguments.fov_horizontal_deg,
+                    fov_vertical_deg=arguments.fov_vertical_deg,
                 ),
                 seed=arguments.seed + episode,
             )
