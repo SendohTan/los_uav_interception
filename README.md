@@ -117,25 +117,25 @@ python examples\stability_benchmark.py --scope multi --episodes 50
 | 配置 | 轨迹 | 命中率 | 振荡率 | 全系统丢失帧 | 测距 MAE | 误差>20%帧 |
 |---|---|---:|---:|---:|---:|---:|
 | legacy | line | 99% | 98% | 0.7% | 13.4% | 22.7% |
-| legacy | cosine | 0% | 100% | 58.7% | 14.9% | 25.8% |
+| legacy | cosine | 82% | 98% | 9.4% | 13.6% | 23.0% |
 | legacy | arc | 95% | 99% | 2.8% | 13.5% | 23.2% |
 | legacy | random | 94% | 99% | 3.4% | 13.4% | 22.9% |
 | legacy | multi_sine | 22% | 98% | 41.5% | 13.7% | 23.8% |
 | legacy | bspline | 78% | 98% | 11.5% | 13.7% | 23.6% |
 | stable | line | 92% | 11% | 6.1% | 14.0% | 24.2% |
-| stable | cosine | 0% | 1% | 61.2% | 15.6% | 27.6% |
+| stable | cosine | 58% | 33% | 22.8% | 13.8% | 23.7% |
 | stable | arc | 65% | 58% | 20.9% | 14.0% | 25.1% |
 | stable | random | 78% | 34% | 13.3% | 13.8% | 24.3% |
 | stable | multi_sine | 12% | 5% | 47.9% | 14.1% | 24.5% |
 | stable | bspline | 53% | 20% | 26.7% | 14.3% | 24.3% |
 | conservative | line | 71% | 0% | 16.2% | 13.7% | 23.6% |
-| conservative | cosine | 0% | 0% | 58.9% | 15.0% | 26.0% |
+| conservative | cosine | 45% | 0% | 28.8% | 13.6% | 23.3% |
 | conservative | arc | 57% | 5% | 23.3% | 13.8% | 24.2% |
 | conservative | random | 23% | 0% | 42.9% | 14.0% | 24.2% |
 | conservative | multi_sine | 3% | 0% | 53.2% | 14.2% | 24.9% |
 | conservative | bspline | 32% | 0% | 36.3% | 14.0% | 24.0% |
 | flight_test | line | 90% | 0% | 5.8% | 13.6% | 23.0% |
-| flight_test | cosine | 0% | 0% | 58.5% | 15.0% | 25.8% |
+| flight_test | cosine | 0% | 0% | 52.3% | 13.8% | 23.5% |
 | flight_test | arc | 15% | 0% | 44.5% | 13.6% | 23.3% |
 | flight_test | random | 6% | 0% | 49.8% | 13.6% | 23.3% |
 | flight_test | multi_sine | 1% | 0% | 54.0% | 14.3% | 25.2% |
@@ -146,25 +146,25 @@ python examples\stability_benchmark.py --scope multi --episodes 50
 | 配置 | 轨迹 | 命中率 | 振荡率 | 全系统丢失帧 | 测距 MAE | 误差>20%帧 |
 |---|---|---:|---:|---:|---:|---:|
 | legacy | line | 100% | 100% | 0.0% | 13.7% | 22.9% |
-| legacy | cosine | 0% | 100% | 56.8% | 14.5% | 24.7% |
+| legacy | cosine | 100% | 100% | 0.0% | 13.4% | 22.1% |
 | legacy | arc | 100% | 100% | 0.0% | 13.2% | 22.3% |
 | legacy | random | 100% | 100% | 0.0% | 13.4% | 22.3% |
 | legacy | multi_sine | 24% | 100% | 40.0% | 13.4% | 22.4% |
 | legacy | bspline | 86% | 100% | 7.1% | 13.3% | 22.7% |
 | stable | line | 100% | 38% | 0.0% | 13.7% | 23.0% |
-| stable | cosine | 0% | 2% | 59.9% | 15.3% | 26.6% |
+| stable | cosine | 88% | 74% | 6.0% | 13.4% | 22.1% |
 | stable | arc | 98% | 96% | 1.2% | 13.2% | 22.5% |
 | stable | random | 100% | 78% | 0.0% | 13.4% | 22.4% |
 | stable | multi_sine | 26% | 14% | 39.5% | 13.5% | 22.7% |
 | stable | bspline | 84% | 66% | 8.3% | 13.5% | 22.7% |
 | conservative | line | 86% | 0% | 7.2% | 13.7% | 23.0% |
-| conservative | cosine | 0% | 0% | 58.2% | 14.7% | 24.8% |
+| conservative | cosine | 74% | 6% | 13.7% | 13.3% | 22.0% |
 | conservative | arc | 92% | 24% | 4.5% | 13.2% | 22.5% |
 | conservative | random | 64% | 6% | 18.6% | 13.4% | 22.4% |
 | conservative | multi_sine | 8% | 0% | 49.3% | 13.5% | 22.8% |
 | conservative | bspline | 50% | 2% | 26.6% | 13.4% | 22.7% |
 | flight_test | line | 98% | 2% | 1.0% | 13.7% | 22.9% |
-| flight_test | cosine | 0% | 0% | 58.6% | 14.7% | 24.9% |
+| flight_test | cosine | 2% | 0% | 51.4% | 13.4% | 22.2% |
 | flight_test | arc | 18% | 0% | 42.9% | 13.2% | 22.3% |
 | flight_test | random | 12% | 0% | 46.6% | 13.5% | 22.5% |
 | flight_test | multi_sine | 10% | 0% | 48.2% | 13.6% | 22.9% |
@@ -174,16 +174,24 @@ python examples\stability_benchmark.py --scope multi --episodes 50
 
 | 场景 | 配置 | 0.6 m 命中率 | 振荡回合占比 | 最大轴换向频率 | jerk RMS |
 |---|---|---:|---:|---:|---:|
-| 单机 | legacy | 64.67% | 98.67% | 3.656 Hz | 23.279 m/s³ |
-| 单机 | stable | 50.00% | 21.50% | 0.276 Hz | 2.378 m/s³ |
-| 单机 | conservative | 31.00% | 0.83% | 0.105 Hz | 1.950 m/s³ |
-| 单机 | flight_test | 19.33% | 0.00% | 0.073 Hz | 1.824 m/s³ |
-| 三机 | legacy | 68.33% | 100.00% | 4.072 Hz | 23.684 m/s³ |
-| 三机 | stable | 68.00% | 49.00% | 0.427 Hz | 2.380 m/s³ |
-| 三机 | conservative | 50.00% | 5.33% | 0.170 Hz | 1.989 m/s³ |
-| 三机 | flight_test | 25.00% | 0.67% | 0.099 Hz | 1.784 m/s³ |
+| 单机 | legacy | 78.33% | 98.33% | 4.129 Hz | 25.062 m/s³ |
+| 单机 | stable | 59.67% | 26.83% | 0.298 Hz | 2.338 m/s³ |
+| 单机 | conservative | 38.50% | 0.83% | 0.106 Hz | 1.905 m/s³ |
+| 单机 | flight_test | 19.33% | 0.00% | 0.069 Hz | 1.825 m/s³ |
+| 三机 | legacy | 85.00% | 100.00% | 4.653 Hz | 25.743 m/s³ |
+| 三机 | stable | 82.67% | 61.00% | 0.474 Hz | 2.378 m/s³ |
+| 三机 | conservative | 62.33% | 6.33% | 0.179 Hz | 1.951 m/s³ |
+| 三机 | flight_test | 25.33% | 0.67% | 0.095 Hz | 1.799 m/s³ |
 
-结果表明，像素量化模型下约 `22%～28%` 的有效观测帧存在超过 `20%` 的测距误差。距离比例误差对归一化 LOS 方向影响有限，但会影响提前时间、目标重捕获和速度追踪项。`stable` 相对 `legacy` 显著降低命令换向频率和 jerk RMS；cosine 与 multi_sine 的低命中率主要伴随长时间 FOV 丢失。默认 `stable` 用于算法仿真，`LOSGuidanceConfig.flight_test()` 用于低速、开阔场地、具备人工接管条件的首轮 HIL 和实飞验证。
+结果表明，像素量化模型下约 `22%～25%` 的有效观测帧存在超过 `20%` 的测距误差。距离比例误差对归一化 LOS 方向影响有限，但会影响提前时间、目标重捕获和速度追踪项。`stable` 相对 `legacy` 显著降低命令换向频率和 jerk RMS，同时增加相位滞后。修正后的 cosine 在 `stable` 下单机/三机命中率为 `58%/88%`；与原项目纯 LOS 的 `99.33%/100%` 不可直接等同，原因见下节。
+
+### 与原项目 cosine 结果的差异
+
+- 原项目 cosine 对飞行方向施加最大约 `0.1575` 的横向无量纲扰动；独立仓库曾误将该系数乘以初始航程，形成数十米空间偏移，已恢复为原方向模型；
+- 原项目的 LOS-rate 使用 `cross(r_true, v_relative_true)/|r_true|²` 直接计算，正式配置的 LOS-rate 噪声为零；独立仓库从带 `0.5°` 误差的连续方位观测回归 LOS-rate，不读取靶机真实速度；
+- 原项目丢视后保留最后目标轨迹并衰减 LOS-rate；独立仓库丢视后安全门释放导引并滑行；
+- 原项目使用随距离平滑变化的回合固定符号偏置，独立仓库使用逐帧整数像素量化；
+- 同种子消融中，独立仓库 `stable` cosine 在干净角度观测下为 `93%`，加入 `0.5°` 角噪声后为约 `62%`；像素量化单独作用时仍为 `93%`。当前主要差距来自带噪方位估计 LOS-rate 与稳定化滤波滞后。
 
 ## 3. 控制器接口
 

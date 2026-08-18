@@ -190,23 +190,6 @@ class GoalDirectedTargetController:
                 * np.sin(2.0 * np.pi * progress)
             )
             return float(lateral), float(vertical)
-        if self.motion == "cosine":
-            return (
-                float(
-                    0.35
-                    * self.curve_strength
-                    * self.initial_range
-                    * envelope
-                    * np.sin(2.0 * np.pi * progress)
-                ),
-                float(
-                    0.10
-                    * self.curve_strength
-                    * self.initial_range
-                    * envelope
-                    * np.sin(3.0 * np.pi * progress)
-                ),
-            )
         if self.motion == "random":
             return (
                 self._bspline_value(self.random_lateral, progress),
@@ -265,7 +248,29 @@ class GoalDirectedTargetController:
             return -target.velocity / self.dt
         goal_direction = to_goal / goal_norm
         desired_direction = goal_direction
-        if self.motion in EVALUATION_MOTION_MODES and self.motion != "line":
+        if self.motion == "cosine":
+            progress = float(
+                np.clip(1.0 - goal_norm / self.initial_range, 0.0, 1.0)
+            )
+            envelope = np.sin(np.pi * progress) ** 2
+            lateral_gain = (
+                self.curve_strength
+                * 0.35
+                * envelope
+                * np.sin(2.0 * np.pi * progress)
+            )
+            vertical_gain = (
+                self.curve_strength
+                * 0.10
+                * envelope
+                * np.sin(3.0 * np.pi * progress)
+            )
+            desired_direction = (
+                goal_direction
+                + lateral_gain * self.lateral
+                + vertical_gain * self.vertical
+            )
+        elif self.motion in EVALUATION_MOTION_MODES and self.motion != "line":
             travelled = float(
                 np.dot(
                     target.position - self.initial_position,
