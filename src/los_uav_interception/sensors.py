@@ -97,6 +97,123 @@ class CameraFOV:
             and abs(vertical) <= np.radians(self.vertical_deg) / 2.0
         )
 
+    def contains_frame(
+        self,
+        relative_position: np.ndarray,
+        frame: tuple[np.ndarray, np.ndarray, np.ndarray],
+    ) -> bool:
+        relative_position = np.asarray(relative_position, dtype=np.float64)
+        forward, right, down = (
+            np.asarray(axis, dtype=np.float64) for axis in frame
+        )
+        forward_component = float(np.dot(relative_position, forward))
+        right_component = float(np.dot(relative_position, right))
+        down_component = float(np.dot(relative_position, down))
+        horizontal = np.arctan2(right_component, forward_component)
+        vertical = np.arctan2(
+            down_component,
+            np.hypot(forward_component, right_component),
+        )
+        return bool(
+            abs(horizontal) <= np.radians(self.horizontal_deg) / 2.0
+            and abs(vertical) <= np.radians(self.vertical_deg) / 2.0
+        )
+
+
+class BodyAttitudeCameraModel:
+    def __init__(
+        self,
+        dt: float,
+        response_tau_s: float = 0.25,
+        gimbal_pitch_deg: float = 0.0,
+        max_roll_deg: float = 45.0,
+        max_pitch_deg: float = 30.0,
+    ) -> None:
+        self.dt = float(dt)
+        self.response_tau_s = float(response_tau_s)
+        self.gimbal_pitch_rad = float(np.radians(gimbal_pitch_deg))
+        self.max_roll_rad = float(np.radians(max_roll_deg))
+        self.max_pitch_rad = float(np.radians(max_pitch_deg))
+        self.yaw = 0.0
+        self.pitch = 0.0
+        self.roll = 0.0
+
+    @staticmethod
+    def _wrap_angle(value: float) -> float:
+        return float((value + np.pi) % (2.0 * np.pi) - np.pi)
+
+    def reset(self, velocity: np.ndarray) -> None:
+        velocity = np.asarray(velocity, dtype=np.float64)
+        horizontal_speed = float(np.linalg.norm(velocity[:2]))
+        if horizontal_speed > 1e-8:
+            self.yaw = float(np.arctan2(velocity[1], velocity[0]))
+            self.pitch = float(np.arctan2(-velocity[2], horizontal_speed))
+        else:
+            self.yaw = 0.0
+            self.pitch = 0.0
+        self.roll = 0.0
+
+    def update(self, velocity: np.ndarray, acceleration: np.ndarray) -> None:
+        velocity = np.asarray(velocity, dtype=np.float64)
+        acceleration = np.asarray(acceleration, dtype=np.float64)
+        horizontal_speed = float(np.linalg.norm(velocity[:2]))
+        target_yaw = self.yaw
+        if horizontal_speed > 1e-8:
+            target_yaw = float(np.arctan2(velocity[1], velocity[0]))
+        target_pitch = float(np.arctan2(-velocity[2], max(horizontal_speed, 1e-8)))
+        right_horizontal = np.array(
+            [-np.sin(target_yaw), np.cos(target_yaw), 0.0], dtype=np.float64
+        )
+        lateral_acceleration = float(np.dot(acceleration, right_horizontal))
+        target_roll = float(np.arctan2(lateral_acceleration, 9.80665))
+        target_roll = float(np.clip(target_roll, -self.max_roll_rad, self.max_roll_rad))
+        target_pitch = float(
+            np.clip(target_pitch, -self.max_pitch_rad, self.max_pitch_rad)
+        )
+        blend = (
+            1.0
+            if self.response_tau_s <= 0.0
+            else 1.0 - float(np.exp(-self.dt / self.response_tau_s))
+        )
+        self.yaw = self._wrap_angle(
+            self.yaw + blend * self._wrap_angle(target_yaw - self.yaw)
+        )
+        self.pitch += blend * (target_pitch - self.pitch)
+        self.roll += blend * (target_roll - self.roll)
+
+    @staticmethod
+    def _rotation_x(angle: float) -> np.ndarray:
+        cosine, sine = np.cos(angle), np.sin(angle)
+        return np.array(
+            [[1.0, 0.0, 0.0], [0.0, cosine, -sine], [0.0, sine, cosine]],
+            dtype=np.float64,
+        )
+
+    @staticmethod
+    def _rotation_y(angle: float) -> np.ndarray:
+        cosine, sine = np.cos(angle), np.sin(angle)
+        return np.array(
+            [[cosine, 0.0, sine], [0.0, 1.0, 0.0], [-sine, 0.0, cosine]],
+            dtype=np.float64,
+        )
+
+    @staticmethod
+    def _rotation_z(angle: float) -> np.ndarray:
+        cosine, sine = np.cos(angle), np.sin(angle)
+        return np.array(
+            [[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+
+    def frame(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        body_to_ned = (
+            self._rotation_z(self.yaw)
+            @ self._rotation_y(self.pitch)
+            @ self._rotation_x(self.roll)
+        )
+        camera_to_ned = body_to_ned @ self._rotation_y(self.gimbal_pitch_rad)
+        return tuple(camera_to_ned[:, axis].copy() for axis in range(3))
+
 
 class RelativePositionSensor:
     """Apply range and bearing noise to a true NED relative-position vector."""
@@ -137,8 +254,13 @@ class RelativePositionSensor:
         self.last_measured_pixels = measured_pixels
         self.last_range_error_fraction = observed_distance / distance - 1.0
         angle_std = np.radians(self.noise.angle_noise_std_deg)
-        observed_azimuth = azimuth + self.rng.normal(0.0, angle_std)
-        observed_elevation = elevation + self.rng.normal(0.0, angle_std)
+        angle_limit = 3.0 * angle_std
+        observed_azimuth = azimuth + float(
+            np.clip(self.rng.normal(0.0, angle_std), -angle_limit, angle_limit)
+        )
+        observed_elevation = elevation + float(
+            np.clip(self.rng.normal(0.0, angle_std), -angle_limit, angle_limit)
+        )
         return np.array(
             [
                 observed_distance

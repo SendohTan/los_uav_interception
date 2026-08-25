@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from los_uav_interception import CameraFOV
-from los_uav_interception.sensors import pixel_quantized_range
+from los_uav_interception.sensors import BodyAttitudeCameraModel, pixel_quantized_range
 
 
 class CameraFOVTest(unittest.TestCase):
@@ -47,6 +47,17 @@ class PixelRangeTest(unittest.TestCase):
         self.assertEqual(high_pixels, 5)
         self.assertAlmostEqual(low_pixel_range, 400.0)
         self.assertAlmostEqual(high_pixel_range, 240.0)
+
+
+class BodyAttitudeCameraTest(unittest.TestCase):
+    def test_camera_heading_has_first_order_response(self) -> None:
+        camera = BodyAttitudeCameraModel(dt=0.1, response_tau_s=0.25)
+        camera.reset(np.array([10.0, 0.0, 0.0]))
+        camera.update(np.array([0.0, 10.0, 0.0]), np.zeros(3))
+        forward, _, _ = camera.frame()
+        self.assertGreater(forward[0], 0.0)
+        self.assertGreater(forward[1], 0.0)
+        self.assertLess(np.arctan2(forward[1], forward[0]), np.pi / 2.0)
 
 
 if __name__ == "__main__":

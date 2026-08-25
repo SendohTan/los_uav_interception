@@ -20,6 +20,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-fov", action="store_true")
     parser.add_argument("--fov-horizontal-deg", type=float, default=24.0)
     parser.add_argument("--fov-vertical-deg", type=float, default=16.0)
+    parser.add_argument("--camera-attitude-response-tau-s", type=float, default=0.25)
+    parser.add_argument("--camera-gimbal-pitch-deg", type=float, default=0.0)
     parser.add_argument("--camera-frame-rate-hz", type=float, default=30.0)
     parser.add_argument("--sensor-latency-s", type=float, default=None)
     parser.add_argument("--detection-dropout-probability", type=float, default=0.01)
@@ -67,6 +69,8 @@ def main() -> None:
         fov_enabled=not arguments.no_fov,
         fov_horizontal_deg=arguments.fov_horizontal_deg,
         fov_vertical_deg=arguments.fov_vertical_deg,
+        camera_attitude_response_tau_s=arguments.camera_attitude_response_tau_s,
+        camera_gimbal_pitch_deg=arguments.camera_gimbal_pitch_deg,
         camera_frame_rate_hz=arguments.camera_frame_rate_hz,
         sensor_latency_s=sensor_latency_s,
         detection_dropout_probability=arguments.detection_dropout_probability,

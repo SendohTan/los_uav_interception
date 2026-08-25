@@ -29,6 +29,10 @@ class SimulationTest(unittest.TestCase):
         self.assertLess(result.minimum_distance, 0.6)
         self.assertEqual(result.target_visible.shape[1], 1)
         self.assertEqual(result.range_error_fraction.shape, result.target_visible.shape)
+        self.assertEqual(result.command_actions.shape, result.interceptor_positions.shape)
+        self.assertEqual(
+            result.actual_accelerations.shape, result.interceptor_positions.shape
+        )
 
     def test_multi_line_interception_reaches_success_radius(self) -> None:
         result = run_multi(SimulationConfig(target_motion="line"), seed=5)
@@ -36,6 +40,10 @@ class SimulationTest(unittest.TestCase):
         self.assertLess(result.minimum_distance, 0.6)
         self.assertEqual(result.target_visible.shape[1], 3)
         self.assertEqual(result.range_error_fraction.shape, result.target_visible.shape)
+        self.assertEqual(result.command_actions.shape, result.interceptor_positions.shape)
+        self.assertEqual(
+            result.actual_accelerations.shape, result.interceptor_positions.shape
+        )
 
 
 if __name__ == "__main__":

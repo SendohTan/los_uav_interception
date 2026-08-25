@@ -22,18 +22,12 @@ PROFILES = {
 }
 
 
-def episode_metrics(result, dt: float) -> list:
-    metrics = []
-    for interceptor_index in range(result.interceptor_velocities.shape[1]):
-        metrics.append(
-            analyze_oscillation(
-                result.desired_velocities[:, interceptor_index, :],
-                result.interceptor_velocities[:, interceptor_index, :],
-                result.guidance_accelerations[:, interceptor_index, :],
-                dt,
-            )
-        )
-    return metrics
+def episode_metrics(result, dt: float):
+    return analyze_oscillation(
+        result.command_actions,
+        result.actual_accelerations,
+        dt,
+    )
 
 
 def summarize(rows: list[dict], profiles: list[str]) -> list[dict]:
@@ -59,15 +53,21 @@ def summarize(rows: list[dict], profiles: list[str]) -> list[dict]:
                     "mean_minimum_distance_m": float(
                         np.mean([row["minimum_distance_m"] for row in selected])
                     ),
-                    "mean_maximum_command_reversal_rate_hz": float(
+                    "mean_max_command_reversal_rate_hz": float(
                         np.mean(
-                            [row["maximum_command_reversal_rate_hz"] for row in selected]
+                            [row["max_command_reversal_rate_hz"] for row in selected]
                         )
                     ),
-                    "mean_acceleration_jerk_rms_mps3": float(
+                    "mean_actual_jerk_rms_mps3": float(
                         np.mean(
-                            [row["mean_acceleration_jerk_rms_mps3"] for row in selected]
+                            [row["actual_jerk_rms_mps3"] for row in selected]
                         )
+                    ),
+                    "mean_oscillation_band_power_ratio": float(
+                        np.mean([row["oscillation_band_power_ratio"] for row in selected])
+                    ),
+                    "mean_acceleration_peak_to_peak_mps2": float(
+                        np.mean([row["acceleration_peak_to_peak_mps2"] for row in selected])
                     ),
                     "mean_agent_visible_fraction": float(
                         np.mean([row["agent_visible_fraction"] for row in selected])
@@ -144,13 +144,15 @@ def main() -> None:
                         "seed": seed,
                         "success": int(result.success),
                         "minimum_distance_m": result.minimum_distance,
-                        "oscillatory": int(any(item.oscillatory for item in stability)),
-                        "maximum_command_reversal_rate_hz": max(
-                            item.maximum_command_reversal_rate_hz for item in stability
-                        ),
-                        "mean_acceleration_jerk_rms_mps3": float(
-                            np.mean([item.acceleration_jerk_rms_mps3 for item in stability])
-                        ),
+                        "oscillatory": int(stability.oscillatory),
+                        "oscillatory_aircraft_count": stability.oscillatory_aircraft_count,
+                        "max_command_reversal_rate_hz": stability.max_command_reversal_rate_hz,
+                        "dominant_frequency_hz": stability.dominant_frequency_hz,
+                        "oscillation_band_power_ratio": stability.oscillation_band_power_ratio,
+                        "acceleration_peak_to_peak_mps2": stability.acceleration_peak_to_peak_mps2,
+                        "actual_jerk_rms_mps3": stability.actual_jerk_rms_mps3,
+                        "command_slew_rms_per_s": stability.command_slew_rms_per_s,
+                        "command_saturation_fraction": stability.command_saturation_fraction,
                         "agent_visible_fraction": float(np.mean(result.target_visible)),
                         "all_agents_lost_fraction": float(
                             np.mean(~np.any(result.target_visible, axis=1))
@@ -179,8 +181,8 @@ def main() -> None:
         print(
             f"{profile_name:6s} success={np.mean([row['success'] for row in selected]):7.2%} "
             f"oscillation={np.mean([row['oscillatory'] for row in selected]):7.2%} "
-            f"reversal={np.mean([row['maximum_command_reversal_rate_hz'] for row in selected]):.3f} Hz "
-            f"jerk={np.mean([row['mean_acceleration_jerk_rms_mps3'] for row in selected]):.3f} m/s^3"
+            f"reversal={np.mean([row['max_command_reversal_rate_hz'] for row in selected]):.3f} Hz "
+            f"jerk={np.mean([row['actual_jerk_rms_mps3'] for row in selected]):.3f} m/s^3"
         )
     print(os.path.abspath(arguments.output))
     print(os.path.abspath(summary_path))

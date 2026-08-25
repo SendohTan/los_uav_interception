@@ -48,6 +48,9 @@ def save_csv(result: SimulationResult, output_path: str | Path, dt: float) -> Pa
         target = result.target_positions[step]
         for index in range(result.interceptor_positions.shape[1]):
             interceptor = result.interceptor_positions[step, index]
+            desired_velocity = result.desired_velocities[step, index]
+            command_action = result.command_actions[step, index]
+            actual_acceleration = result.actual_accelerations[step, index]
             rows.append(
                 [
                     step * dt,
@@ -57,6 +60,9 @@ def save_csv(result: SimulationResult, output_path: str | Path, dt: float) -> Pa
                     result.distances[step, index],
                     int(result.target_visible[step, index]),
                     result.range_error_fraction[step, index],
+                    *desired_velocity,
+                    *command_action,
+                    *actual_acceleration,
                 ]
             )
     np.savetxt(
@@ -66,7 +72,10 @@ def save_csv(result: SimulationResult, output_path: str | Path, dt: float) -> Pa
         header=(
             "time_s,interceptor_id,interceptor_north_m,interceptor_east_m,"
             "interceptor_down_m,target_north_m,target_east_m,target_down_m,distance_m,"
-            "target_visible,range_error_fraction"
+            "target_visible,range_error_fraction,desired_velocity_north_mps,"
+            "desired_velocity_east_mps,desired_velocity_down_mps,command_action_north,"
+            "command_action_east,command_action_down,actual_acceleration_north_mps2,"
+            "actual_acceleration_east_mps2,actual_acceleration_down_mps2"
         ),
         comments="",
     )
