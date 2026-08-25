@@ -6,12 +6,39 @@
 - 当前主配置：`stable_current + accurate_delayed`
 - 命中阈值：连续轨迹最近距离 `< 0.6 m`
 - 正式报告：[`docs/main_aligned_deployment_20260825/REPORT.md`](docs/main_aligned_deployment_20260825/REPORT.md)
+- 历史版本与指标说明：[`docs/main_aligned_deployment_20260825/HISTORY_AND_METRICS.md`](docs/main_aligned_deployment_20260825/HISTORY_AND_METRICS.md)
 - 两仓库一致性审计：[`docs/main_aligned_deployment_20260825/PARITY.md`](docs/main_aligned_deployment_20260825/PARITY.md)
 - 60 组独立三维轨迹：[`docs/main_aligned_deployment_20260825/version_trajectories/INDEX.md`](docs/main_aligned_deployment_20260825/version_trajectories/INDEX.md)
 
-## 1. 当前系统
+## 1. 版本定位与历史关系
 
-### 1.1 仿真与传感器
+截至 8 月 17 日的汇报内容以“复杂机动性能主线”为主：旧一阶 LOS 增加 `0.5kT²·l̈` 二阶曲率预测，随后加入一架跟踪机和两架截获机固定角色。当前 v0.4.1 对齐的是 8 月 18 日以后形成的“实机稳定部署主线”，使用经过分层整形的一阶 classic LOS，并进一步统一相机、延迟、执行器和振荡指标。
+
+| 阶段 | 方法 | 核心变化 | 三机结构 | 当时结果 |
+|---|---|---|---|---:|
+| 07.28 旧 LOS | 一阶预测 `l+T·l̇` | 利用当前 LOS 转动提前瞄准 | 同类拦截机 | PPT 汇总 `88.72%` |
+| 08.07 纯曲率 LOS | 二阶预测 `l+T·l̇+0.5kT²·l̈` | 估计转弯加剧或回正趋势 | 三机纯曲率 | `90.56%` |
+| 08.07 固定角色 | 曲率 LOS + 参数异质化 | 跟踪机保视场，两架截获机扩大交会角 | 跟踪 + 左右截获 | `92.06%` |
+| 08.18 稳定化 | 一阶/曲率 LOS 加分层滤波 | 解决指令高频变化和曲率差分噪声 | 单机同种子消融 | 稳定一阶 `85.83%/0%` |
+| **当前 v0.4.1** | **稳定一阶 LOS** | **准确延迟 LOS-rate、30 Hz、姿态 FOV、执行器与当前指标对齐** | **三架独立 LOS 拦截机** | **单机 `85.50%/0%`，三机 `86.50%/0%`** |
+
+当前 `stable_current` 不包含二阶曲率项，也不采用 PPT 的固定跟踪/截获角色。它是当前可部署稳定基线，曲率预测与固定角色属于后续可重新接入的研究模块。
+
+仓库中的五个类型是同一当前环境下的控制配置档位：
+
+| 类型 | 含义 | 与历史内容的关系 |
+|---|---|---|
+| `legacy` | 原始未稳定化一阶 LOS 参数 | 复现早期控制结构，但当前结果不等同于 PPT 的旧 LOS 历史结果 |
+| `stable_v02` | 11 帧方位历史估计与分层整形 | 对应早期稳定化思路，不包含曲率项 |
+| `conservative` | 在 v0.2 上增强滤波 | 用于平滑性/响应滞后消融 |
+| `flight_test` | 最强滤波和最低变化率 | 首飞保守参数候选，不表示已完成实机验证 |
+| `stable_current` | 当前一阶稳定 LOS | 对齐主项目部署口径，正式结果使用准确延迟 LOS-rate |
+
+历史数字与当前数字不能直接作为单一算法升级曲线。8 月 7 日使用二阶曲率、固定角色、`20%@300m` 比例测距模型和每曲线 300 个种子；当前使用一阶稳定 LOS、离散像素测距、机体姿态相机、30 Hz/延迟/丢检/执行响应和每曲线 100 个种子。详细逐项对照见 [`HISTORY_AND_METRICS.md`](docs/main_aligned_deployment_20260825/HISTORY_AND_METRICS.md)。
+
+## 2. 当前系统
+
+### 2.1 仿真与传感器
 
 - 仿真步长 `0.1 s`，最长 `1000` 步；
 - A 型拦截机、C 型靶机，速度、加速度和 jerk 均受机型约束；
@@ -26,11 +53,11 @@
 
 三机模式保留独立仓库的差异化角色：三架独立 LOS 拦截机的导引常数分别为基础值的 `0.9/1.0/1.1` 倍。主项目的一架观测机与两架拦截机角色结构未移植到本仓库。
 
-### 1.2 命中与命中函数 F
+### 2.2 命中与命中函数 F
 
 相邻仿真状态之间使用连续线段最近距离，任一拦截机与靶机的最近距离小于 `0.6 m` 即判定回合成功。命中函数 F 的相对速度、方位角、高度角和距离分量只作为诊断记录，不参与成功判定。
 
-### 1.3 Stable LOS 参数
+### 2.3 Stable LOS 参数
 
 | 参数 | 当前值 | 作用 |
 |---|---:|---|
@@ -42,7 +69,7 @@
 | `velocity_slew_limit` | `4 m/s²` | 限制期望速度变化率 |
 | `acceleration_filter_tau` | `0.12 s` | 平滑导引加速度 |
 
-## 2. LOS 控制流程
+## 3. LOS 控制流程
 
 观测相对位置与视线单位向量：
 
@@ -76,11 +103,11 @@ a_base = a_pursuit + a_PN
 
 控制器不读取靶机轨迹类别、未来航点或未来控制量。`accurate_delayed` 表示外部感知/融合系统能够在保留观测误差与延迟的条件下提供准确 LOS 角速度；实机可由视觉跟踪、雷达、惯导融合或专用 LOS-rate 估计器产生该输入。
 
-## 3. 正式复测结果
+## 4. 正式复测结果
 
 固定基准种子为 `2026082591`。每种曲线测试 `100` 回合，单机和三机各 `600` 回合。
 
-### 3.1 当前配置
+### 4.1 当前配置
 
 | 场景 | 曲线 | 0.6 m 命中率 | 振荡率 | 最小距离均值 | 最大轴换向频率均值 | jerk RMS | 可见帧比例 |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -101,7 +128,7 @@ a_base = a_pursuit + a_PN
 
 三机相对单机提高 `1.00` 个百分点。当前三机使用相邻初始位置和相近控制参数，各机失败事件相关性较高；额外收益主要来自 random、multi-sine 和 B 样条，尚未形成三个统计独立的拦截机会。
 
-### 3.2 五个 LOS 版本
+### 4.2 五个 LOS 版本
 
 历史四个版本使用 `bearing_history`，当前版本使用 `accurate_delayed`。所有版本采用同一 v0.4.1 环境、种子、FOV、噪声和动力学。
 
@@ -138,7 +165,7 @@ a_base = a_pursuit + a_PN
 | flight_test | 100/0 | 1/0 | 15/0 | 12/0 | 11/0 | 6/0 |
 | **stable_current** | **100/0** | **89/0** | **89/0** | **86/0** | **75/0** | **80/0** |
 
-### 3.3 LOS-rate 输入消融
+### 4.3 LOS-rate 输入消融
 
 | 场景 | 参数 | LOS-rate 来源 | 命中率 | 振荡率 | jerk RMS |
 |---|---|---|---:|---:|---:|
@@ -153,7 +180,7 @@ a_base = a_pursuit + a_PN
 
 主要命中提升来自 LOS-rate 输入质量。当前低延迟滤波参数针对低噪声外部 LOS-rate 标定，直接接入带 `0.5°` 噪声的方位历史差分会放大高频换向。方位历史接口应采用 `stable_v02`，或在部署前重新设计 LOS-rate 估计器和滤波参数。
 
-## 4. 振荡指标
+## 5. 振荡指标
 
 每回合去除前 `2 s` 暖机数据。单架飞机同时满足以下条件时判定为振荡：
 
@@ -166,7 +193,7 @@ a_base = a_pursuit + a_PN
 
 汇总文件中的 `*_threshold_exceedance_rate` 表示单项指标超过阈值的比例，不用于表示安全通过率。最终振荡率只统计三个动态阈值与有效时长同时满足的回合。
 
-## 5. 安装与运行
+## 6. 安装与运行
 
 ```powershell
 conda create -n los_uav python=3.11 -y
@@ -190,7 +217,7 @@ python -m los_uav_interception single `
 
 默认生成 `outputs/trajectory.png` 和 `outputs/trajectory.csv`。CSV 包含位置、目标可见状态、测距误差、期望速度、归一化动作和实际执行加速度。
 
-## 6. Python 接口
+## 7. Python 接口
 
 ```python
 from los_uav_interception import AIRCRAFT_LIMITS, LOSGuidanceConfig, LOSGuidanceController
@@ -210,7 +237,7 @@ normalized_action = command.normalized_action
 
 任务开始前调用一次 `controller.reset()`。目标丢失时通过 `GuidanceSafetyGate` 和 `controller.coast(dt)` 延续主项目的衰减滑行逻辑。
 
-## 7. 数据与复现
+## 8. 数据与复现
 
 ```powershell
 python -m unittest discover -s tests -v
@@ -228,12 +255,13 @@ python examples\stability_benchmark.py `
 - [`comparison_versions_summary.csv`](docs/main_aligned_deployment_20260825/comparison_versions_summary.csv)
 - [`ablation_los_source_summary.csv`](docs/main_aligned_deployment_20260825/ablation_los_source_summary.csv)
 - [`version_trajectories/trajectory_index.csv`](docs/main_aligned_deployment_20260825/version_trajectories/trajectory_index.csv)
+- [`HISTORY_AND_METRICS.md`](docs/main_aligned_deployment_20260825/HISTORY_AND_METRICS.md)
 
-## 8. 工程边界
+## 9. 工程边界
 
 当前验证范围为导引层、观测链路和简化执行器。实机部署仍需完成姿态角速度内环、真实电机/桨动力学、NED/机体/相机/云台坐标标定、时间戳同步、通信抖动、风扰、GPS/惯导误差、目标跟踪置信度、地理围栏、故障保护、HIL 和分级限速试飞。
 
-## 9. 项目结构
+## 10. 项目结构
 
 ```text
 src/los_uav_interception/
@@ -250,12 +278,13 @@ examples/
   hardware_loop.py        HIL/实机调用示例
 docs/main_aligned_deployment_20260825/
   REPORT.md                正式报告
+  HISTORY_AND_METRICS.md   历史版本与指标口径说明
   PARITY.md                两仓库一致性审计
   version_trajectories/    60 组版本轨迹图和 CSV
 tests/                     回归测试
 ```
 
-## 10. Git 维护
+## 11. Git 维护
 
 ```powershell
 git status
