@@ -70,12 +70,21 @@ class PointMassUAV:
         dt: float = 0.1,
         position: np.ndarray | None = None,
         velocity: np.ndarray | None = None,
+        command_delay_steps: int = 0,
+        acceleration_response_tau_s: float = 0.0,
     ) -> None:
         self.limits = limits
         self.dt = float(dt)
         self.position = np.zeros(3, dtype=np.float64)
         self.velocity = np.zeros(3, dtype=np.float64)
         self.acceleration = np.zeros(3, dtype=np.float64)
+        self.command_delay_steps = max(int(command_delay_steps), 0)
+        self.acceleration_response_tau_s = max(
+            float(acceleration_response_tau_s),
+            0.0,
+        )
+        self.filtered_acceleration_command = np.zeros(3, dtype=np.float64)
+        self.command_queue: list[np.ndarray] = []
         self.reset(position, velocity)
 
     def reset(
@@ -90,9 +99,31 @@ class PointMassUAV:
             velocity, dtype=np.float64
         ).copy()
         self.acceleration = np.zeros(3, dtype=np.float64)
+        self.filtered_acceleration_command = np.zeros(3, dtype=np.float64)
+        self.command_queue = [
+            np.zeros(3, dtype=np.float64)
+            for _ in range(self.command_delay_steps)
+        ]
 
     def step(self, acceleration_command: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        limited = limit_acceleration(acceleration_command, self.limits)
+        acceleration_command = np.asarray(
+            acceleration_command,
+            dtype=np.float64,
+        ).copy()
+        self.command_queue.append(acceleration_command)
+        delayed_command = self.command_queue.pop(0)
+        if self.acceleration_response_tau_s > 0.0:
+            alpha = float(np.exp(-self.dt / self.acceleration_response_tau_s))
+            self.filtered_acceleration_command = (
+                alpha * self.filtered_acceleration_command
+                + (1.0 - alpha) * delayed_command
+            )
+        else:
+            self.filtered_acceleration_command = delayed_command.copy()
+        limited = limit_acceleration(
+            self.filtered_acceleration_command,
+            self.limits,
+        )
         acceleration_delta = limited - self.acceleration
         maximum_delta = self.limits.max_jerk * self.dt
         delta_norm = float(np.linalg.norm(acceleration_delta))

@@ -13,16 +13,16 @@ from .dynamics import (
 
 @dataclass(frozen=True)
 class LOSGuidanceConfig:
-    navigation_constant: float = 8.0
-    pursuit_gain: float = 0.06
+    navigation_constant: float = 4.0
+    pursuit_gain: float = 0.04
     lead_time: float = 3.0
     desired_speed_ratio: float = 0.98
-    los_rate_filter_alpha: float = 0.75
-    los_rate_window_size: int = 11
-    los_rate_soft_threshold_rad_s: float = 0.01
-    desired_velocity_filter_tau_s: float = 0.30
+    los_rate_filter_alpha: float = 0.0
+    los_rate_window_size: int = 2
+    los_rate_soft_threshold_rad_s: float = 0.002
+    desired_velocity_filter_tau_s: float = 0.25
     desired_velocity_slew_limit_mps2: float = 4.0
-    acceleration_filter_tau_s: float = 0.20
+    acceleration_filter_tau_s: float = 0.12
 
     def __post_init__(self) -> None:
         if self.navigation_constant < 0.0:

@@ -11,6 +11,14 @@ from los_uav_interception.guidance import LOSRateEstimator
 
 
 class GuidanceTest(unittest.TestCase):
+    def test_stable_profile_matches_accurate_los_release(self) -> None:
+        config = LOSGuidanceConfig()
+        self.assertEqual(config.navigation_constant, 4.0)
+        self.assertEqual(config.pursuit_gain, 0.04)
+        self.assertEqual(config.los_rate_soft_threshold_rad_s, 0.002)
+        self.assertEqual(config.desired_velocity_filter_tau_s, 0.25)
+        self.assertEqual(config.acceleration_filter_tau_s, 0.12)
+
     def test_constant_bearing_has_zero_los_rate(self) -> None:
         estimator = LOSRateEstimator(filter_alpha=0.85, window_size=2)
         first = estimator.update(np.array([1.0, 0.0, 0.0]), dt=0.1)

@@ -37,7 +37,29 @@ class SimulationConfig:
     fov_enabled: bool = True
     fov_horizontal_deg: float = 24.0
     fov_vertical_deg: float = 16.0
+    camera_frame_rate_hz: float = 30.0
+    sensor_latency_s: float = 1.0 / 30.0
+    detection_dropout_probability: float = 0.01
+    los_rate_source: str = "accurate_delayed"
+    command_delay_steps: int = 1
+    acceleration_response_tau_s: float = 0.2
     guidance_config: LOSGuidanceConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.dt <= 0.0 or self.max_time <= 0.0:
+            raise ValueError("simulation time parameters must be positive")
+        if self.camera_frame_rate_hz <= 0.0:
+            raise ValueError("camera_frame_rate_hz must be positive")
+        if self.sensor_latency_s < 0.0:
+            raise ValueError("sensor_latency_s must be non-negative")
+        if not 0.0 <= self.detection_dropout_probability <= 1.0:
+            raise ValueError("detection dropout probability must be in [0, 1]")
+        if self.los_rate_source not in ("accurate_delayed", "bearing_history"):
+            raise ValueError("unsupported los_rate_source")
+        if self.command_delay_steps < 0:
+            raise ValueError("command_delay_steps must be non-negative")
+        if self.acceleration_response_tau_s < 0.0:
+            raise ValueError("acceleration_response_tau_s must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -77,6 +99,21 @@ def _segment_minimum_distance(
         )
     )
     return float(np.linalg.norm(relative_previous + fraction * relative_delta))
+
+
+def accurate_delayed_los_rate(
+    relative_position: np.ndarray,
+    relative_velocity: np.ndarray,
+    latency_s: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    relative_position = np.asarray(relative_position, dtype=np.float64)
+    relative_velocity = np.asarray(relative_velocity, dtype=np.float64)
+    delayed_position = relative_position - max(float(latency_s), 0.0) * relative_velocity
+    range_squared = float(np.dot(delayed_position, delayed_position))
+    if range_squared < 1e-12:
+        return delayed_position, np.zeros(3, dtype=np.float64)
+    los_rate = np.cross(delayed_position, relative_velocity) / range_squared
+    return delayed_position, los_rate
 
 
 class GoalDirectedTargetController:
@@ -371,10 +408,13 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         interceptor_limits,
         dt=config.dt,
         velocity=interceptor_velocity,
+        command_delay_steps=config.command_delay_steps,
+        acceleration_response_tau_s=config.acceleration_response_tau_s,
     )
     controller = LOSGuidanceController(config.guidance_config)
     safety_gate = GuidanceSafetyGate(controller, interceptor_limits)
     sensor = _make_sensor(config, seed)
+    detection_rng = np.random.default_rng(seed + 10000)
     camera_fov = _make_fov(config)
     target_controller = GoalDirectedTargetController(
         config.target_motion,
@@ -399,12 +439,22 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         previous_interceptor = interceptor.position.copy()
         previous_target = target.position.copy()
         true_relative_position = target.position - interceptor.position
-        target_visible = (
+        true_relative_velocity = target.velocity - interceptor.velocity
+        delayed_relative_position, accurate_los_rate = accurate_delayed_los_rate(
+            true_relative_position,
+            true_relative_velocity,
+            config.sensor_latency_s,
+        )
+        physically_visible = (
             not config.fov_enabled
-            or camera_fov.contains(true_relative_position, interceptor.velocity)
+            or camera_fov.contains(delayed_relative_position, interceptor.velocity)
+        )
+        target_visible = bool(
+            physically_visible
+            and detection_rng.random() >= config.detection_dropout_probability
         )
         observed_relative_position = (
-            sensor.measure(true_relative_position)
+            sensor.measure(delayed_relative_position)
             if target_visible
             else np.zeros(3, dtype=np.float64)
         )
@@ -413,10 +463,15 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         )
         command = safety_gate.command(
             current_time_s=step * config.dt,
-            measurement_time_s=step * config.dt,
+            measurement_time_s=step * config.dt - config.sensor_latency_s,
             target_visible=target_visible,
             relative_position_ned_m=observed_relative_position,
             own_velocity_ned_mps=interceptor.velocity,
+            measured_los_rate_rad_s=(
+                accurate_los_rate
+                if config.los_rate_source == "accurate_delayed"
+                else None
+            ),
         )
         command_acceleration = (
             np.zeros(3, dtype=np.float64)
@@ -515,6 +570,8 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
                 dt=config.dt,
                 position=offsets[index],
                 velocity=velocity,
+                command_delay_steps=config.command_delay_steps,
+                acceleration_response_tau_s=config.acceleration_response_tau_s,
             )
         )
         controllers.append(
@@ -529,6 +586,10 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
             GuidanceSafetyGate(controllers[-1], interceptor_limits)
         )
         sensors.append(_make_sensor(config, seed + index))
+    detection_rngs = [
+        np.random.default_rng(seed + 10000 + index)
+        for index in range(3)
+    ]
     camera_fov = _make_fov(config)
 
     target_controller = GoalDirectedTargetController(
@@ -565,12 +626,23 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         step_range_errors = []
         for index, interceptor in enumerate(interceptors):
             true_relative_position = target.position - interceptor.position
-            target_visible = (
+            true_relative_velocity = target.velocity - interceptor.velocity
+            delayed_relative_position, accurate_los_rate = accurate_delayed_los_rate(
+                true_relative_position,
+                true_relative_velocity,
+                config.sensor_latency_s,
+            )
+            physically_visible = (
                 not config.fov_enabled
-                or camera_fov.contains(true_relative_position, interceptor.velocity)
+                or camera_fov.contains(delayed_relative_position, interceptor.velocity)
+            )
+            target_visible = bool(
+                physically_visible
+                and detection_rngs[index].random()
+                >= config.detection_dropout_probability
             )
             observed_relative_position = (
-                sensors[index].measure(true_relative_position)
+                sensors[index].measure(delayed_relative_position)
                 if target_visible
                 else np.zeros(3, dtype=np.float64)
             )
@@ -579,10 +651,15 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
             )
             command = safety_gates[index].command(
                 current_time_s=step * config.dt,
-                measurement_time_s=step * config.dt,
+                measurement_time_s=step * config.dt - config.sensor_latency_s,
                 target_visible=target_visible,
                 relative_position_ned_m=observed_relative_position,
                 own_velocity_ned_mps=interceptor.velocity,
+                measured_los_rate_rad_s=(
+                    accurate_los_rate
+                    if config.los_rate_source == "accurate_delayed"
+                    else None
+                ),
             )
             command_acceleration = (
                 np.zeros(3, dtype=np.float64)

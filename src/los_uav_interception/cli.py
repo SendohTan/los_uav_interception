@@ -20,6 +20,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-fov", action="store_true")
     parser.add_argument("--fov-horizontal-deg", type=float, default=24.0)
     parser.add_argument("--fov-vertical-deg", type=float, default=16.0)
+    parser.add_argument("--camera-frame-rate-hz", type=float, default=30.0)
+    parser.add_argument("--sensor-latency-s", type=float, default=None)
+    parser.add_argument("--detection-dropout-probability", type=float, default=0.01)
+    parser.add_argument(
+        "--los-rate-source",
+        choices=("accurate_delayed", "bearing_history"),
+        default="accurate_delayed",
+    )
+    parser.add_argument("--command-delay-steps", type=int, default=1)
+    parser.add_argument("--acceleration-response-tau-s", type=float, default=0.2)
     parser.add_argument(
         "--guidance-profile",
         choices=("legacy", "stable", "conservative", "flight_test"),
@@ -33,6 +43,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     arguments = build_parser().parse_args()
+    if arguments.camera_frame_rate_hz <= 0.0:
+        raise ValueError("camera frame rate must be positive")
+    sensor_latency_s = (
+        1.0 / arguments.camera_frame_rate_hz
+        if arguments.sensor_latency_s is None
+        else arguments.sensor_latency_s
+    )
     guidance_profiles = {
         "legacy": LOSGuidanceConfig.legacy,
         "stable": LOSGuidanceConfig,
@@ -50,6 +67,12 @@ def main() -> None:
         fov_enabled=not arguments.no_fov,
         fov_horizontal_deg=arguments.fov_horizontal_deg,
         fov_vertical_deg=arguments.fov_vertical_deg,
+        camera_frame_rate_hz=arguments.camera_frame_rate_hz,
+        sensor_latency_s=sensor_latency_s,
+        detection_dropout_probability=arguments.detection_dropout_probability,
+        los_rate_source=arguments.los_rate_source,
+        command_delay_steps=arguments.command_delay_steps,
+        acceleration_response_tau_s=arguments.acceleration_response_tau_s,
         guidance_config=guidance_profiles[arguments.guidance_profile](),
     )
     runner = run_single if arguments.scope == "single" else run_multi
