@@ -6,7 +6,6 @@ import numpy as np
 
 from .dynamics import (
     AircraftLimits,
-    limit_acceleration,
     velocity_along_direction,
 )
 
@@ -59,6 +58,23 @@ class LOSGuidanceConfig:
             "desired_velocity_filter_tau_s": 0.0,
             "desired_velocity_slew_limit_mps2": 0.0,
             "acceleration_filter_tau_s": 0.0,
+        }
+        values.update(overrides)
+        return cls(**values)
+
+    @classmethod
+    def stable_v02(cls, **overrides: float) -> "LOSGuidanceConfig":
+        values = {
+            "navigation_constant": 8.0,
+            "pursuit_gain": 0.06,
+            "lead_time": 3.0,
+            "desired_speed_ratio": 0.98,
+            "los_rate_filter_alpha": 0.75,
+            "los_rate_window_size": 11,
+            "los_rate_soft_threshold_rad_s": 0.01,
+            "desired_velocity_filter_tau_s": 0.30,
+            "desired_velocity_slew_limit_mps2": 4.0,
+            "acceleration_filter_tau_s": 0.20,
         }
         values.update(overrides)
         return cls(**values)
@@ -206,6 +222,45 @@ class LOSGuidanceController:
         self.filtered_desired_velocity = None
         self.filtered_acceleration.fill(0.0)
 
+    def coast(
+        self,
+        own_velocity: np.ndarray,
+        limits: AircraftLimits,
+        dt: float,
+    ) -> GuidanceCommand:
+        own_velocity = np.asarray(own_velocity, dtype=np.float64)
+        if own_velocity.shape != (3,) or not np.all(np.isfinite(own_velocity)):
+            raise ValueError("own_velocity must be a finite shape-(3,) vector")
+        decay_tau = max(self.config.acceleration_filter_tau_s, float(dt))
+        self.filtered_acceleration *= float(np.exp(-float(dt) / decay_tau))
+        scale = np.array(
+            [
+                limits.max_horizontal_acceleration,
+                limits.max_horizontal_acceleration,
+                limits.max_vertical_acceleration,
+            ],
+            dtype=np.float64,
+        )
+        normalized_action = np.clip(
+            self.filtered_acceleration / scale,
+            -1.0,
+            1.0,
+        )
+        acceleration = normalized_action * scale
+        zeros = np.zeros(3, dtype=np.float64)
+        return GuidanceCommand(
+            acceleration=acceleration,
+            normalized_action=normalized_action,
+            line_of_sight=zeros,
+            line_of_sight_rate=zeros,
+            aim_direction=zeros,
+            raw_desired_velocity=own_velocity.copy(),
+            desired_velocity=own_velocity.copy(),
+            pursuit_acceleration=zeros,
+            proportional_navigation_acceleration=zeros,
+            distance=np.inf,
+        )
+
     def command(
         self,
         relative_position: np.ndarray,
@@ -326,7 +381,6 @@ class LOSGuidanceController:
                 + (1.0 - alpha) * raw_acceleration
             )
         self.filtered_acceleration = raw_acceleration.copy()
-        acceleration = limit_acceleration(raw_acceleration, limits)
         scale = np.array(
             [
                 limits.max_horizontal_acceleration,
@@ -335,7 +389,8 @@ class LOSGuidanceController:
             ],
             dtype=np.float64,
         )
-        normalized_action = np.clip(acceleration / scale, -1.0, 1.0)
+        normalized_action = np.clip(raw_acceleration / scale, -1.0, 1.0)
+        acceleration = normalized_action * scale
         return GuidanceCommand(
             acceleration=acceleration,
             normalized_action=normalized_action,

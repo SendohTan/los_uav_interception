@@ -11,6 +11,13 @@ from los_uav_interception.guidance import LOSRateEstimator
 
 
 class GuidanceTest(unittest.TestCase):
+    def test_v02_profile_preserves_historical_stable_parameters(self) -> None:
+        config = LOSGuidanceConfig.stable_v02()
+        self.assertEqual(config.navigation_constant, 8.0)
+        self.assertEqual(config.los_rate_window_size, 11)
+        self.assertEqual(config.los_rate_filter_alpha, 0.75)
+        self.assertEqual(config.los_rate_soft_threshold_rad_s, 0.01)
+
     def test_stable_profile_matches_accurate_los_release(self) -> None:
         config = LOSGuidanceConfig()
         self.assertEqual(config.navigation_constant, 4.0)
@@ -26,7 +33,7 @@ class GuidanceTest(unittest.TestCase):
         np.testing.assert_allclose(first, np.zeros(3), atol=1e-12)
         np.testing.assert_allclose(second, np.zeros(3), atol=1e-12)
 
-    def test_controller_respects_acceleration_limits(self) -> None:
+    def test_controller_matches_main_project_action_clipping(self) -> None:
         limits = AIRCRAFT_LIMITS["A"]
         controller = LOSGuidanceController()
         controller.command(
@@ -41,13 +48,23 @@ class GuidanceTest(unittest.TestCase):
             limits=limits,
             dt=0.1,
         )
-        self.assertLessEqual(
-            np.linalg.norm(command.acceleration[:2]),
-            limits.max_horizontal_acceleration + 1e-9,
-        )
+        self.assertTrue(np.all(np.abs(command.normalized_action) <= 1.0))
+        self.assertLessEqual(abs(command.acceleration[0]), limits.max_horizontal_acceleration)
+        self.assertLessEqual(abs(command.acceleration[1]), limits.max_horizontal_acceleration)
         self.assertLessEqual(
             abs(command.acceleration[2]),
             limits.max_vertical_acceleration + 1e-9,
+        )
+
+    def test_coast_decays_filtered_acceleration(self) -> None:
+        limits = AIRCRAFT_LIMITS["A"]
+        controller = LOSGuidanceController()
+        controller.filtered_acceleration = np.array([1.0, -0.5, 0.25])
+        command = controller.coast(np.array([10.0, 0.0, 0.0]), limits, 0.1)
+        expected_decay = np.exp(-0.1 / 0.12)
+        np.testing.assert_allclose(
+            command.acceleration,
+            np.array([1.0, -0.5, 0.25]) * expected_decay,
         )
 
     def test_stable_profile_limits_first_velocity_command_change(self) -> None:

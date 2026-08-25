@@ -13,6 +13,8 @@ class GuidanceSafetyGateConfig:
     minimum_dt_s: float = 0.02
     maximum_dt_s: float = 0.20
     maximum_measurement_age_s: float = 0.20
+    loss_behavior: str = "release"
+    coast_dt_s: float = 0.1
 
     def __post_init__(self) -> None:
         if self.minimum_dt_s <= 0.0:
@@ -21,6 +23,10 @@ class GuidanceSafetyGateConfig:
             raise ValueError("maximum_dt_s must not be smaller than minimum_dt_s")
         if self.maximum_measurement_age_s <= 0.0:
             raise ValueError("maximum_measurement_age_s must be positive")
+        if self.loss_behavior not in ("release", "coast"):
+            raise ValueError("loss_behavior must be release or coast")
+        if self.coast_dt_s <= 0.0:
+            raise ValueError("coast_dt_s must be positive")
 
 
 class GuidanceSafetyGate:
@@ -60,6 +66,20 @@ class GuidanceSafetyGate:
             self.reset()
             return None
         measurement_age = current_time_s - measurement_time_s
+        own_velocity = np.asarray(own_velocity_ned_mps, dtype=np.float64)
+        if (
+            own_velocity.shape != (3,)
+            or not np.all(np.isfinite(own_velocity))
+        ):
+            self.reset()
+            return None
+        if not target_visible and self.config.loss_behavior == "coast":
+            self.previous_sample_time_s = measurement_time_s
+            return self.controller.coast(
+                own_velocity,
+                self.limits,
+                self.config.coast_dt_s,
+            )
         if (
             not target_visible
             or measurement_age < 0.0
@@ -68,12 +88,9 @@ class GuidanceSafetyGate:
             self.reset()
             return None
         relative_position = np.asarray(relative_position_ned_m, dtype=np.float64)
-        own_velocity = np.asarray(own_velocity_ned_mps, dtype=np.float64)
         if (
             relative_position.shape != (3,)
-            or own_velocity.shape != (3,)
             or not np.all(np.isfinite(relative_position))
-            or not np.all(np.isfinite(own_velocity))
         ):
             self.reset()
             return None

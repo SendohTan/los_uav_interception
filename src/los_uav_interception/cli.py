@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--acceleration-response-tau-s", type=float, default=0.2)
     parser.add_argument(
         "--guidance-profile",
-        choices=("legacy", "stable", "conservative", "flight_test"),
+        choices=("legacy", "stable", "stable_v02", "conservative", "flight_test"),
         default="stable",
     )
     parser.add_argument("--seed", type=int, default=1)
@@ -55,6 +55,7 @@ def main() -> None:
     guidance_profiles = {
         "legacy": LOSGuidanceConfig.legacy,
         "stable": LOSGuidanceConfig,
+        "stable_v02": LOSGuidanceConfig.stable_v02,
         "conservative": LOSGuidanceConfig.conservative,
         "flight_test": LOSGuidanceConfig.flight_test,
     }

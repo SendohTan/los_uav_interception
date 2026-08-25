@@ -5,6 +5,7 @@ import numpy as np
 from los_uav_interception import (
     AIRCRAFT_LIMITS,
     GuidanceSafetyGate,
+    GuidanceSafetyGateConfig,
     LOSGuidanceController,
 )
 
@@ -38,6 +39,25 @@ class GuidanceSafetyGateTest(unittest.TestCase):
         self.assertIsNone(self.command(1.0, 1.0))
         self.assertIsNone(self.command(1.1, 1.1, visible=False))
         self.assertIsNone(self.command(1.2, 1.2))
+
+    def test_coast_mode_returns_decaying_command_on_target_loss(self) -> None:
+        controller = LOSGuidanceController()
+        controller.filtered_acceleration = np.array([1.0, 0.0, 0.0])
+        gate = GuidanceSafetyGate(
+            controller,
+            AIRCRAFT_LIMITS["A"],
+            GuidanceSafetyGateConfig(loss_behavior="coast", coast_dt_s=0.1),
+        )
+        command = gate.command(
+            current_time_s=1.0,
+            measurement_time_s=1.0,
+            target_visible=False,
+            relative_position_ned_m=np.zeros(3),
+            own_velocity_ned_mps=self.velocity,
+        )
+        self.assertIsNotNone(command)
+        self.assertGreater(command.acceleration[0], 0.0)
+        self.assertLess(command.acceleration[0], 1.0)
 
 
 if __name__ == "__main__":

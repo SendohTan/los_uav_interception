@@ -7,7 +7,7 @@ from scipy.interpolate import make_interp_spline
 
 from .dynamics import AIRCRAFT_LIMITS, PointMassUAV, velocity_along_direction
 from .guidance import LOSGuidanceConfig, LOSGuidanceController
-from .integration import GuidanceSafetyGate
+from .integration import GuidanceSafetyGate, GuidanceSafetyGateConfig
 from .metrics import hit_probability_components
 from .sensors import (
     BearingRangeNoise,
@@ -51,6 +51,7 @@ class SimulationConfig:
     los_rate_source: str = "accurate_delayed"
     command_delay_steps: int = 1
     acceleration_response_tau_s: float = 0.2
+    guidance_loss_behavior: str = "coast"
     guidance_config: LOSGuidanceConfig | None = None
 
     def __post_init__(self) -> None:
@@ -70,6 +71,8 @@ class SimulationConfig:
             raise ValueError("command_delay_steps must be non-negative")
         if self.acceleration_response_tau_s < 0.0:
             raise ValueError("acceleration_response_tau_s must be non-negative")
+        if self.guidance_loss_behavior not in ("release", "coast"):
+            raise ValueError("guidance_loss_behavior must be release or coast")
 
 
 @dataclass(frozen=True)
@@ -454,7 +457,7 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
     interceptor_velocity = velocity_along_direction(
         target.position,
         interceptor_limits,
-        ratio=0.75,
+        ratio=0.85,
     )
     interceptor = PointMassUAV(
         interceptor_limits,
@@ -464,7 +467,14 @@ def run_single(config: SimulationConfig, seed: int = 1) -> SimulationResult:
         acceleration_response_tau_s=config.acceleration_response_tau_s,
     )
     controller = LOSGuidanceController(config.guidance_config)
-    safety_gate = GuidanceSafetyGate(controller, interceptor_limits)
+    safety_gate = GuidanceSafetyGate(
+        controller,
+        interceptor_limits,
+        GuidanceSafetyGateConfig(
+            loss_behavior=config.guidance_loss_behavior,
+            coast_dt_s=config.dt,
+        ),
+    )
     sensor = _make_sensor(config, seed)
     detection_rng = np.random.default_rng(seed + 10000)
     camera_fov = _make_fov(config)
@@ -653,7 +663,14 @@ def run_multi(config: SimulationConfig, seed: int = 1) -> SimulationResult:
             )
         )
         safety_gates.append(
-            GuidanceSafetyGate(controllers[-1], interceptor_limits)
+            GuidanceSafetyGate(
+                controllers[-1],
+                interceptor_limits,
+                GuidanceSafetyGateConfig(
+                    loss_behavior=config.guidance_loss_behavior,
+                    coast_dt_s=config.dt,
+                ),
+            )
         )
         sensors.append(_make_sensor(config, seed + index))
     detection_rngs = [

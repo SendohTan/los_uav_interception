@@ -78,7 +78,7 @@ omega_LOS = cross(r_delay, v_relative) / |r_delay|^2
 | B样条 | 41% | 67% |
 | **总体** | **80.00%** | **25.67%** |
 
-对应代码、4200回合全方法数据和三维轨迹位于[mappo_uav_project结果分支](https://github.com/SendohTan/mappo_uav_project/tree/codex/accurate-los-30hz-dense-rl-20260824/docs/los_angular_rate_realistic_0p6/accurate_los_30hz_dense_rl_20260825)。
+对应代码、4200回合全方法数据和三维轨迹位于[mappo_uav_project结果分支](https://github.com/SendohTan/mappo_uav_project/tree/accurate-los-30hz-dense-rl-20260824/docs/los_angular_rate_realistic_0p6/accurate_los_30hz_dense_rl_20260825)。
 
 ## 三维轨迹
 
