@@ -9,6 +9,7 @@
 - 历史版本与指标说明：[`docs/main_aligned_deployment_20260825/HISTORY_AND_METRICS.md`](docs/main_aligned_deployment_20260825/HISTORY_AND_METRICS.md)
 - 两仓库一致性审计：[`docs/main_aligned_deployment_20260825/PARITY.md`](docs/main_aligned_deployment_20260825/PARITY.md)
 - 60 组独立三维轨迹：[`docs/main_aligned_deployment_20260825/version_trajectories/INDEX.md`](docs/main_aligned_deployment_20260825/version_trajectories/INDEX.md)
+- 单机日志振荡复算：[输入格式与结果说明](docs/SINGLE_OSCILLATION_AUDIT.md)
 
 ## 1. 版本定位与历史关系
 
@@ -192,6 +193,16 @@ a_base = a_pursuit + a_PN
 多机中任一拦截机同时满足全部条件，该回合即记为振荡。当前单机换向频率中位数/95 分位/最大值为 `0.080/0.217/0.366 Hz`，三机为 `0.086/0.235/0.380 Hz`，全部低于 `0.4 Hz`，因此正式样本中的联合振荡率为 `0%`。600 回合零检出对应的二项分布近似 95% 上界约为 `0.5%`，实机仍需用相同字段和判据复核。
 
 汇总文件中的 `*_threshold_exceedance_rate` 表示单项指标超过阈值的比例，不用于表示安全通过率。最终振荡率只统计三个动态阈值与有效时长同时满足的回合。
+
+### 单机日志离线复算
+
+安装后可对一架飞机的已记录 CSV 复算振荡指标。
+
+```powershell
+python -m los_uav_interception.single_oscillation_audit trajectory.csv
+```
+
+输入包含时间戳、三轴归一化指令和三轴实际加速度。工具从日志时间戳识别采样频率，并沿用本节振荡判据。对 60 Hz 日志，默认同时给出原始采样结果和每六点取一点的 10 Hz 对照结果。若提供图像采样时间与生效指令的来源时间，还会统计记录中的延迟中位数和 P95。详见[单机振荡复算说明](docs/SINGLE_OSCILLATION_AUDIT.md)。
 
 ## 6. 安装与运行
 
